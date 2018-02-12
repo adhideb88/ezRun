@@ -189,3 +189,39 @@ output[['Static Report [Link]']] = 'p2578/ataqvApp-2018/ataqv/index.html'
 #output = EzDataset$new(meta=output, dataRoot=param$dataRoot)
 EzAppAtaqv$new()$run(input=input, output=output, param=param)
 
+## Consensus Macs peaks, featurecounts, deseq2
+library(ezRun)
+setEnvironments("macs2")
+
+setwd("/scratch/gtan/p2578-atacENCODE/DiffPeaks")
+param = list()
+param[['cores']] = '4'
+param[['ram']] = '16'
+param[['scratch']] = '100'
+param[['node']] = ''
+param[['process_mode']] = 'DATASET'
+param[['refBuild']] = 'Homo_sapiens/GENCODE/GRCh38.p10/Annotation/Release_27-2018-02-01'
+param[['paired']] = 'true'
+param[['refFeatureFile']] = 'genes.gtf'
+param[['grouping']] = 'Condition'
+param[['sampleGroup']] = 'asthmatic_P'
+param[['refGroup']] = 'asthmatic_US'
+param[['grouping2']] = 'Subject'
+param[['mail']] = 'ge.tan@fgcz.ethz.ch'
+param[['dataRoot']] = '/srv/gstore/projects'
+param[['resultDir']] = 'p2578/DiffPeaks_2018'
+### special params for this app
+
+input <- "input_dataset.tsv"
+output = list()
+output[['Name']] = 'P--over--US'
+output[['Species']] = 'Homo sapiens (human)'
+output[['refBuild']] = 'Homo_sapiens/GENCODE/GRCh38.p10/Annotation/Release_27-2018-02-01'
+output[['Report [File]']] = 'p2578/DiffPeaks_2018/DiffPeaks_asthmatic_P--over--US'
+output[['DiffPeaks [File]']] = 'p2578/DiffPeaks_2018/DiffPeaks_asthmatic_P--over--US/diffPeaks.txt'
+
+input = EzDataset$new(file=input, dataRoot=param$dataRoot)
+param <- ezParam(param)
+output = EzDataset$new(meta=output, dataRoot=param$dataRoot)
+
+EzAppDiffPeaks$new()$run(input=input, output=output, param=param)
