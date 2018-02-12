@@ -15,21 +15,8 @@ ezMethodMacs2 = function(input=NA, output=NA, param=NA){
   
   ## -g option: mappable genome size
   if(!grepl("-g", opt)){
-    gsizes <- c("Homo sapiens (human)"="hs",
-                "Mus musculus (mouse)"="mm",
-                "Caenorhabditis elegans (worm)"="ce",
-                "Drosophila melanogaster (fruitfly)"="dm")
-    isGsize <- grepl(input$getColumn("Species"), names(gsizes),
-                     ignore.case = TRUE)
-    if(any(isGsize)){
-      message("Use predefined gsize: ", gsizes[isGsize])
-      gsize <- gsizes[isGsize]
-    }else{
-      require(Biostrings)
-      gsize <- sum(as.numeric(fasta.seqlengths(param$ezRef["refFastaFile"])))
-      gsize <- round(gsize * 0.8)
-      message("Use calculated gsize: ", gsize)
-    }
+    gsize <- gSizeMacs2(species=input$getColumn("Species"), 
+                        fastaFn=param$ezRef["refFastaFile"])
     opt <- paste(opt, "-g", gsize)
   }
   ## --keep-dup: behavior towards duplicate tags at the exact same location
@@ -199,4 +186,25 @@ import.Macs2Peaks <- function(con){
   bed <- transform(bed, start=start+1)
   bed <- makeGRangesFromDataFrame(bed, keep.extra.columns=TRUE)
   return(bed)
+}
+
+gSizeMacs2 <- function(species, fastaFn=NULL){
+  gsizes <- c("Homo sapiens (human)"="hs",
+              "Mus musculus (mouse)"="mm",
+              "Caenorhabditis elegans (worm)"="ce",
+              "Drosophila melanogaster (fruitfly)"="dm")
+  isGsize <- grepl(species, names(gsizes), fixed=TRUE)
+  if(any(isGsize)){
+    message("Use predefined gsize: ", gsizes[isGsize])
+    gsize <- gsizes[isGsize]
+  }else{
+    require(Biostrings)
+    if(is.null(fastaFn)){
+      stop("The fastaFn has to be specified.")
+    }
+    gsize <- sum(as.numeric(fasta.seqlengths(fastaFn)))
+    gsize <- round(gsize * 0.8)
+    message("Use calculated gsize: ", gsize)
+  }
+  return(gsize)
 }
