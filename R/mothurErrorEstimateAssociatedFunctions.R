@@ -45,47 +45,17 @@
   ##' @return Returns a table
   convStepTable <- function(convStepFile){
     stepTable <- read.table(convStepFile,stringsAsFactors = FALSE, sep = "\t", header = TRUE)
+   # stepTable<- ezRead.table(convStepFile)
     colnames(stepTable) <- c(colnames(stepTable)[2:length(colnames(stepTable))],"dum")
     stepTable$iteration <- rownames(stepTable)
     colToKeep <- c("iteration","num_otus","sensitivity","specificity","fdr","accuracy")
     stepTable <- stepTable[,colToKeep]
+    stepTable$iteration <- as.integer(stepTable$iteration)
     return(stepTable)
   }
   
 
-  ###################################################################
-  # Functional Genomics Center Zurich
-  # This code is distributed under the terms of the GNU General
-  # Public License Version 3, June 2007.
-  # The terms are available here: http://www.gnu.org/licenses/gpl.html
-  # www.fgcz.ch
-  
-  
-  ##' @title OTUs saturation plot
-  ##' @description HOw many OTUs do we really have?
-  ##' @param  sharedFile, mothur shared abundance  file.
-  ##' @return Returns a table
-  otuSaturationPlot <- function(sharedFile){
-    sharedAbund <- read.table(sharedFile, stringsAsFactors = FALSE, sep = "\t", header = TRUE)
-    sharedAbund <- t(sharedAbund)
-    totOtus <- sharedAbund[rownames(sharedAbund) == "numOtus",]
-    rowToKeep <- grepl("^Otu.*$",rownames(sharedAbund))
-    sharedAbundDF <- data.frame(data.matrix(data.frame(sharedAbund[rowToKeep,], stringsAsFactors = FALSE)))
-    colnames(sharedAbundDF) <- sharedAbund[rownames(sharedAbund) == "Group",]
-    cumSumTransform <- data.frame(apply(sharedAbundDF,2,cumsum))
-    dfFinal = data.frame()
-    for (i in 1:ncol(cumSumTransform))
-    { dfTemp <-  data.frame(abundances = cumSumTransform[,colnames(cumSumTransform)[i]])
-      dfTemp$group <- as.factor(colnames(cumSumTransform)[i])
-      dfTemp$xAx <- seq_along(1:nrow(dfTemp))
-      dfFinal <- rbind(dfFinal,dfTemp)
-      }
-    titleText <- "OTUs saturation"
-    saturationPlot <- ggplot(dfFinal, aes(x=xAx,y=abundances, group = group,  colour = group)) + geom_line() +
-    labs(title=titleText, x = "Number of OTUs", y = "Total sequences") + 
-    theme(plot.title=element_text(size=15, face="bold",hjust=0.5))
-    return(saturationPlot)
-  }
+
   
   ###################################################################
   # Functional Genomics Center Zurich
@@ -111,6 +81,8 @@
       ldply(lapply(seq(from = 20, to = 200, by = 20),function(x) y[x]/y[nrow(cumSumTransform)]*100)))
     finalSaturationTable <- data.frame(matrix(unlist(tempList), nrow=10, byrow=F),stringsAsFactors=FALSE)
     finalSaturationTable <- data.frame(cbind(seq(from = 20, to = 200, by = 20),finalSaturationTable))
-    colnames(finalSaturationTable) <- c("num OTUs",names(tempList))
-    return(finalSaturationTable)
+    colnames(finalSaturationTable) <- c("numOTUs","PercOTUsCovered")
+    finalSaturationTableDF <- data.frame(PercOTUsCovered = finalSaturationTable$PercOTUsCovered, stringsAsFactors = F)
+    rownames(finalSaturationTableDF) <- finalSaturationTable$numOTUs
+    return(finalSaturationTableDF)
   }

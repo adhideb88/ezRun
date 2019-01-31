@@ -323,10 +323,8 @@ ezMatrix <- function(x, rows=NULL, cols=NULL, dim=NULL){
 ##' @examples
 ##' x = ezScaleColumns(matrix(1:20, 5), 1:4)
 ezScaleColumns = function(x, scaling){
-  for (i in 1:length(scaling)){
-    x[,i] <- x[ ,i] * scaling[i]
-  }
-  return(x)
+  ans <- sweep(x, MARGIN=2, STATS=scaling, FUN="*")
+  return(ans)
 }
 
 ##' @title Scales columns of a matrix to median
@@ -729,6 +727,8 @@ isValidEnvironments <- function(tool){
                 "homer"=Sys.which("homer") != "",
                 "r"=Sys.which("R") != "",
                 "ataqv"=Sys.which("ataqv") != "",
+                "ucsc"=Sys.which("faToTwoBit") != "",
+                "fastqc"=Sys.which("fastqc") != "",
                 stop("unsupported tool: ", tool)
                 )
   return(ans)
@@ -738,13 +738,13 @@ setEnvironments <- function(tool, envir=parent.frame()){
   tool <- tolower(tool)
   if(!isTRUE(isValidEnvironments(tool))){
     cmd <- switch(tool,
-                  "picard"=expression({Sys.setenv("PATH"=paste("/usr/local/ngseq/packages/Dev/jdk/8/bin", Sys.getenv("PATH"), sep=":")); Sys.setenv("Picard_jar"="/usr/local/ngseq/packages/Tools/Picard/2.9.0/picard.jar")}),
+                  "picard"=expression({Sys.setenv("PATH"=paste("/usr/local/ngseq/packages/Dev/jdk/8/bin", Sys.getenv("PATH"), sep=":")); Sys.setenv("Picard_jar"="/usr/local/ngseq/packages/Tools/Picard/2.18.0/picard.jar")}),
                   "trimmomatic"=expression({Sys.setenv("PATH"=paste("/usr/local/ngseq/packages/Dev/jdk/8/bin", Sys.getenv("PATH"), sep=":")); Sys.setenv("Trimmomatic_jar"="/usr/local/ngseq/packages/QC/Trimmomatic/0.36/trimmomatic-0.36.jar")}),
                   "phantomjs"=expression({Sys.setenv("PATH"=paste("/usr/local/ngseq/packages/Dev/PhantomJS/2.1.1/bin", Sys.getenv("PATH"), sep=":"))}),
-                  "samtools"=expression({Sys.setenv("PATH"=paste("/usr/local/ngseq/packages/Tools/samtools/1.5/bin", Sys.getenv("PATH"), sep=":"))}),
+                  "samtools"=expression({Sys.setenv("PATH"=paste("/usr/local/ngseq/packages/Tools/samtools/1.9/bin", Sys.getenv("PATH"), sep=":"))}),
                   "bamutil"=expression({Sys.setenv("PATH"=paste("/usr/local/ngseq/packages/Tools/BamUtil/1.0.14/bin", Sys.getenv("PATH"), sep=":"))}),
-                  "star"=expression({Sys.setenv("PATH"=paste("/usr/local/ngseq/packages/Aligner/STAR/2.5.3a/bin", Sys.getenv("PATH"), sep=":"))}),
-                  "bwa"=expression({Sys.setenv("PATH"=paste("/usr/local/ngseq/packages/Aligner/BWA/0.7.15/bin", Sys.getenv("PATH"), sep=":"))}),
+                  "star"=expression({Sys.setenv("PATH"=paste("/usr/local/ngseq/packages/Aligner/STAR/2.5.4b/bin", Sys.getenv("PATH"), sep=":"))}),
+                  "bwa"=expression({Sys.setenv("PATH"=paste("/usr/local/ngseq/packages/Aligner/BWA/0.7.17/bin", Sys.getenv("PATH"), sep=":"))}),
                   "flexbar"=expression({Sys.setenv("PATH"=paste("/usr/local/ngseq/packages/QC/Flexbar/3.0.3/bin", Sys.getenv("PATH"), sep=":"))}),
                   "bowtie2"=expression({Sys.setenv("PATH"=paste("/usr/local/ngseq/packages/Aligner/Bowtie2/2.3.2/bin", Sys.getenv("PATH"), sep=":"))}),
                   "bowtie"=expression({Sys.setenv("PATH"=paste("/usr/local/ngseq/packages/Aligner/Bowtie/1.2.1.1/bin", Sys.getenv("PATH"), sep=":"))}),
@@ -757,8 +757,10 @@ setEnvironments <- function(tool, envir=parent.frame()){
                   "macs2"=expression({Sys.setenv("PATH"=paste("/usr/local/ngseq/packages/Dev/Python2/2.7.13/bin", Sys.getenv("PATH"), sep=":"))}),
                   "igvtools"=expression({Sys.setenv("PATH"=paste("/usr/local/ngseq/packages/Tools/IGVTools/2.3.91", Sys.getenv("PATH"), sep=":"))}),
                   "homer"=expression({Sys.setenv("PATH"=paste("/usr/local/ngseq/packages/Tools/HOMER/4.9/bin", Sys.getenv("PATH"), sep=":"))}),
-                  "r"=expression({Sys.setenv("PATH"=paste("/usr/local/ngseq/packages/Dev/R/3.4.2/bin", Sys.getenv("PATH"), sep=":"))}),
+                  "r"=expression({Sys.setenv("PATH"=paste("/usr/local/ngseq/packages/Dev/R/3.5.0/bin", Sys.getenv("PATH"), sep=":"))}),
                   "ataqv"=expression({Sys.setenv("PATH"=paste("/usr/local/ngseq/packages/Tools/ataqv/1.0.0/bin", Sys.getenv("PATH"), sep=":"))}),
+                  "ucsc"=expression({Sys.setenv("PATH"=paste("/usr/local/ngseq/packages/Tools/UCSC/349/bin", Sys.getenv("PATH"), sep=":"))}),
+                  "fastqc"=expression({Sys.setenv("PATH"=paste("/usr/local/ngseq/packages/QC/FastQC/0.11.7", Sys.getenv("PATH"), sep=":"))}),
                   stop("unsupported tool: ", tool)
     )
     eval(cmd, envir=envir)

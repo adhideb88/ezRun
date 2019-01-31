@@ -24,6 +24,7 @@
 ##'   \item{subsampleReads}{ an integer specifying how many subsamples there are. This will call \code{ezMethodSubsampleReads()} if > 1.}
 ##'   \item{trimAdapter}{ a logical specifying whether to use a trim adapter.}
 ##'   \item{minTailQuality}{ an integer specifying the minimal tail quality to accept. Only used if > 0.}
+##'   \item{minTrailingQuality}{ an integer specifying the minimal trailing quality to accept. Only used if > 0.}
 ##'   \item{minAvgQuality}{ an integer specifying the minimal average quality to accept. Only used if > 0.}
 ##'   \item{minReadLength}{ an integer specifying the minimal read length to accept.}
 ##'   \item{dataRoot}{ a character specifying the path of the data root to get the full column paths from.}
@@ -31,6 +32,10 @@
 ##' @template roxygen-template
 ##' @return Returns the output after trimming as an object of the class EzDataset.
 ezMethodTrim = function(input=NA, output=NA, param=NA){
+  
+  if (any(grepl("bam$", input$getFullPaths("Read1")))){
+    stop("can not process unmapped bam as input")
+  }
   
   ## if output is not an EzDataset, set it!
   if (!is(output, "EzDataset")){
@@ -101,7 +106,8 @@ ezMethodTrim = function(input=NA, output=NA, param=NA){
     if (!is.null(param$onlyAdapterFromDataset) && param$onlyAdapterFromDataset){
       writeXStringSet(adapters, adaptFile)
     } else {
-      ezSystem(paste("cp", TRIMMOMATIC_ADAPTERS, adaptFile))
+      file.copy(from=TRIMMOMATIC_ADAPTERS,
+                to=adaptFile)
       writeXStringSet(adapters, adaptFile, append=TRUE)
     }
     on.exit(file.remove(adaptFile), add=TRUE)
@@ -113,9 +119,22 @@ ezMethodTrim = function(input=NA, output=NA, param=NA){
   }
   
   if (param$minTailQuality > 0){
-    tailQualOpt = paste("SLIDINGWINDOW", param$trimQualWindowWidth, param$minTailQuality, sep=":")
+    tailQualOpt = paste("SLIDINGWINDOW", param$trimQualWindowWidth,
+                        param$minTailQuality, sep=":")
   } else {
     tailQualOpt = ""
+  }
+  
+  if(param$minLeadingQuality >0){
+    leadingQualOpt <- paste("LEADING", param$minLeadingQuality, sep=":")
+  }else{
+    leadingQualOpt <- ""
+  }
+
+    if(param$minTrailingQuality >0){
+    trailingQualOpt <- paste("TRAILING", param$minTrailingQuality, sep=":")
+  }else{
+    trailingQualOpt <- ""
   }
   
   if (param$minAvgQuality > 0){
@@ -136,17 +155,18 @@ ezMethodTrim = function(input=NA, output=NA, param=NA){
         "unpaired-R1.fastq",
         r2TmpFile,
         "unpaired-R2.fastq")
+        on.exit(file.remove(c("unpaired-R1.fastq", "unpaired-R2.fastq")),
+                add=TRUE)
     } else {
       method = "SE"
       readOpts = paste(
         input$getFullPaths("Read1"), r1TmpFile)
     }
-    cmd = paste("java -Djava.io.tmpdir=. -jar", Sys.getenv("Trimmomatic_jar"), method,
-                "-threads", min(ezThreads(), 8), "-phred33", ## hardcode phred33 quality encoding
-                #"-trimlog", paste0(input$getNames(), "-trimmomatic.log"),
-                readOpts, trimAdaptOpt, tailQualOpt, minAvgQualOpt,
-                #               paste("HEADCROP", param$trimLeft, sep=":"),
-                #               paste("CROP", param$trimRight, sep=":"),
+    cmd = paste("java -Djava.io.tmpdir=. -jar",
+                Sys.getenv("Trimmomatic_jar"), method,
+                ## hardcode phred33 quality encoding
+                "-threads", min(param$cores, 8), "-phred33",
+                readOpts, trimAdaptOpt, tailQualOpt, leadingQualOpt, trailingQualOpt, minAvgQualOpt,
                 paste("MINLEN", param$minReadLength, sep=":"),
                 "> trimmomatic.out 2> trimmomatic.err")
     on.exit(file.remove(c("trimmomatic.out", "trimmomatic.err")), add=TRUE)
@@ -179,7 +199,7 @@ ezMethodTrim = function(input=NA, output=NA, param=NA){
       minReadLengthOpt = ""
     }
     cmd = paste("flexbar",
-                "--threads", min(ezThreads(), 8),
+                "--threads", min(param$cores, 8),
                 "-r", r1TmpFile,
                 pairedOpt,
                 "-u", 20, ##### max uncalled bases
@@ -247,9 +267,7 @@ copyReadsLocally = function(input, param){
   for (rds in reads){
     readFileIn = input$getFullPaths(rds)
     
-    #ezSystem(paste("cp -n", readFileIn, "."))
     file.copy(from=readFileIn, to=".")
-    ## cp will fail when readFileIn is already local.
     
     input$setColumn(rds, basename(readFileIn))
     # if (Sys.info()["user"] == "trxcopy") { ## only run the check for the user trxcopy!!!
@@ -275,6 +293,7 @@ copyReadsLocally = function(input, param){
 ### ezMethodSubsampleReads: subsample fastq
 ###
 ezMethodSubsampleReads = function(input=NA, output=NA, param=NA){
+  nYield=1e5
   require(ShortRead)
   if (!is(output, "EzDataset")){
     output = input$copy()
@@ -296,21 +315,35 @@ ezMethodSubsampleReads = function(input=NA, output=NA, param=NA){
   } else {
     nReads <- as.integer(1/param$subsampleReads * totalReads)
   }
-  set.seed(123L);
   for(i in 1:length(input$getFullPaths("Read1"))){
-    fR1 <- FastqSampler(input$getFullPaths("Read1")[i], n=nReads[i])
-    writeFastq(ShortRead::yield(fR1),
-               file=output$getColumn("Read1")[i], 
-               compress=grepl("\\.gz$", output$getColumn("Read1")[i]))
-    close(fR1)
-    output$setColumn("Read Count", nReads[i])
+    idxMaster = sample.int(size=nReads[i], n=totalReads[i])
+    fullFile = input$getFullPaths("Read1")[i]
+    subFile = output$getColumn("Read1")[i]
+    idx = idxMaster
+    fqs <- FastqStreamer(fullFile, n=nYield)
+    while(length(x <- yield(fqs))){
+      use = idx <= length(x)
+      writeFastq(x[idx[use]], file=sub(".gz$", "", subFile), mode="a", full=F, compress=F)
+      idx = idx[!use] - length(x)
+    }
+    close(fqs)
+    if (grepl(".gz$", subFile)){
+      ezSystem(paste("pigz -p 2 ", sub(".gz$", "", subFile)))
+    }
     if (param$paired){
-      set.seed(123L);
-      fR2 <- FastqSampler(input$getFullPaths("Read2")[i], n=nReads[i])
-      writeFastq(ShortRead::yield(fR2),
-                 file=output$getColumn("Read2")[i],
-                 compress=grepl("\\.gz$", output$getColumn("Read2")[i]))
-      close(fR2)
+      fullFile = input$getFullPaths("Read2")[i]
+      subFile = output$getColumn("Read2")[i]
+      idx = idxMaster
+      fqs <- FastqStreamer(fullFile, n=nYield)
+      while(length(x <- yield(fqs))){
+        use = idx <= length(x)
+        writeFastq(x[idx[use]], file=sub(".gz$", "", subFile), mode="a", full=F, compress=F)
+        idx = idx[!use] - length(x)
+      }
+      close(fqs)
+      if (grepl(".gz$", subFile)){
+        ezSystem(paste("pigz -p 2 ", sub(".gz$", "", subFile)))
+      }
     }
   }
   return(output)

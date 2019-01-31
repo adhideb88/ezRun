@@ -62,7 +62,9 @@ keepUnpaired	character	both	if unpaired alignments of paired-end reads should be
 minSignal	integer	1	numbers below that value will be given random small numbers
 # read handling
 minAvgQuality	integer	10	the min average quality for a read to be used
-minTailQuality	integer	0	the min average quality of the quality filter window below which tails are trimmed	
+minTailQuality	integer	0	the min average quality of the quality filter window below which tails are trimmed
+minLeadingQuality	integer	0	Cut bases off the start of a read, if below a threshold quality
+minTrailingQuality	integer	0	Cut bases off the end of a read, if below a threshold quality.
 qualityFilterWindow	integer	4	the width of bases across which qualities are averaged
 subsampleReads	integer	1	if set to n; take every n-th reads
 trimLeft	integer	0	fixed trimming at the left (5'-end)
@@ -90,6 +92,7 @@ useFactorsAsSampleName	logical	FALSE	should sample names be replaced with the ca
 refGroup	character		the reference group in a comparison
 sampleGroup	character		the sample group in a comparison
 removeOtherGroups	logical	FALSE	should only the samples that are in the groups to be compared be kept and other samples should be removed
+removeDuplicates	logical	TRUE	should duplicates be removed in TeqcApp
 ## functional analysis
 goseqMethod	character	Wallenius	method for the goseq analysis
 includeGoParentAnnotation	logical	FALSE	if the genes annotated to the parent should be also counted to the current GO category
@@ -129,3 +132,6 @@ seqNames	charVector		should analyse be restricted to certain chromosomes/contigs
 #flexbarOpt # trinity
 #prinseqOpt # trinity
 #trinityOpt
+isParsed	logical	FALSE	the param has been parsed by EzParam() once already?
+#SingleCell mode
+scProtocol	character		scProtocol

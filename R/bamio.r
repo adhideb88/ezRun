@@ -31,7 +31,7 @@ ezBamSeqLengths = function(bamFile){
 }
 
 ezSortIndexBam = function(inBam, bam, ram=2, removeBam=TRUE, cores=2,
-                          method=c("sambamba", "samtools")){
+                          method=c("samtools", "sambamba", "picard")){
   method <- match.arg(method)
   
   maxMem = paste0(as.integer(floor(ram * 0.7/cores*1000)), "M") 
@@ -44,11 +44,24 @@ ezSortIndexBam = function(inBam, bam, ram=2, removeBam=TRUE, cores=2,
     ezSystem(cmd)
     cmd = paste(method, "index", "-t", cores, bam)
     ezSystem(cmd)
-  }else{
+  }else if(method == "samtools"){
     cmd = paste(method, "sort", "-l 9", "-m", maxMem, "-@", cores, inBam, 
                 "-o", bam)
     ezSystem(cmd)
     cmd = paste(method, "index", bam)
+    ezSystem(cmd)
+  }else{
+    cmd <- paste("java -Djava.io.tmpdir=. -jar", 
+                 Sys.getenv("Picard_jar"), "SortSam",
+                 paste0("I=", inBam),
+                 paste0("O=", bam),
+                 "SORT_ORDER=coordinate")
+    ezSystem(cmd)
+    cmd <- paste("java -Djava.io.tmpdir=. -jar", 
+                 Sys.getenv("Picard_jar"), "BuildBamIndex",
+                 paste0("I=", bam),
+                 paste0("OUTPUT=", bam, ".bai")
+                 )
     ezSystem(cmd)
   }
   if (removeBam){
@@ -186,7 +199,9 @@ ezReadGappedAlignments = function(bamFile, seqname=NULL, start=NULL, end=NULL, s
                                   isFirstMateRead=NA, isSecondMateRead=NA, 
                                   isUnmappedQuery=FALSE, isProperPair=NA,
                                   isSecondaryAlignment = NA,
-                                  minMapQuality=0, keepMultiHits=TRUE){
+                                  minMapQuality=0, 
+                                  tagFilter=list(),
+                                  keepMultiHits=TRUE){
   ## initialize the parameters for scanBam
   require(Rsamtools)
   require(GenomicAlignments)
@@ -196,7 +211,7 @@ ezReadGappedAlignments = function(bamFile, seqname=NULL, start=NULL, end=NULL, s
   if (!keepMultiHits){
     tag = union(tag, c("NH", "IH"))
   }
-  param = ScanBamParam(what=what, tag=tag)
+  param = ScanBamParam(what=what, tag=tag, tagFilter = tagFilter)
   
   ### build and set the flag filter
   isMinusStrand = switch(strand, "-"=TRUE, "+"=FALSE, NA)
@@ -527,7 +542,6 @@ getBamMultiMatching = function(param, bamFile, nReads=NULL){
 }
 
 getBamLocally = function(src, toSam=FALSE){
-
   if (normalizePath(dirname(src)) %in% c(".", normalizePath(getwd()))){
     return(src)
   }
@@ -544,19 +558,4 @@ getBamLocally = function(src, toSam=FALSE){
               to=paste0(target, ".bai"))
   }
   return(target)
-}
-
-mergeBamAlignments <- function(alignedBamFn, unmappedBamFn,
-                               outputBamFn, fastaFn){
-  setEnvironments("picard")
-  
-  ## Use . as tmp dir. Big bam generates big tmp files.
-  cmd <- paste("java -Djava.io.tmpdir=. -jar", 
-               Sys.getenv("Picard_jar"), "MergeBamAlignment",
-               paste0("ALIGNED=", alignedBamFn), 
-               paste0("UNMAPPED=", unmappedBamFn),
-               paste0("O=", outputBamFn),
-               paste0("R=", fastaFn)
-  )
-  ezSystem(cmd)
 }

@@ -296,7 +296,7 @@ ezVolcano <- function(log2Ratio, pValue, yType=c("p-value", "FDR"),
                  // d.points is an array of objects which, in this case,
                  // is length 1 since the click is tied to 1 point.
                  var pt = d.points[0];
-                 var genecardUrl = 'http://www.ihop-net.org/UniPub/iHOP/index.html?field=synonym&ncbi_tax_id=0&search=';
+                 var genecardUrl = 'https://www.ncbi.nlm.nih.gov/gene/?term=';
                  var url = genecardUrl.concat(pt.data.text[pt.pointNumber]);
                  // DISCLAIMER: this won't work from RStudio
                  window.open(url);
@@ -314,19 +314,25 @@ ezVolcano <- function(log2Ratio, pValue, yType=c("p-value", "FDR"),
       t = 110,
       pad = 0
     )
-    p <- layout(p, 
-                xaxis=list(title="log2 ratio", 
-                           titlefont=ftitle,
-                           tickfont=ftick,
-                           range=c(xlim[1]-0.1, xlim[2]+0.1)),
-                yaxis=list(title=paste0("-log10(", yType, ")"),
-                           titlefont=ftitle,
-                           tickfont=ftick,
-                           range=c(ylim[1], ylim[2]+0.1)),
-                title=main, font=ftitle,
-                legend=l, margin=m)
+    p <- plotly::layout(p, 
+                        xaxis=list(title="log2 ratio", 
+                                   titlefont=ftitle,
+                                   tickfont=ftick,
+                                   range=c(xlim[1]-0.1, xlim[2]+0.1)),
+                        yaxis=list(title=paste0("-log10(", yType, ")"),
+                                   titlefont=ftitle,
+                                   tickfont=ftick,
+                                   range=c(ylim[1], ylim[2]+0.1)),
+                        title=main, font=ftitle,
+                        legend=l, margin=m)
   }else{
-    p <- ggplot(toPlot, aes(x, y)) + geom_point(aes(col=types)) +
+    if(!is.null(labelGenes)){
+      alpha <- 0.5
+    }else{
+      alpha <- 1
+    }
+    p <- ggplot(toPlot, aes(x, y)) +
+      geom_point(size=1, aes(col=types), alpha =alpha) +
       scale_color_manual(values=typesColours) + 
       scale_x_continuous(limits=xlim) + scale_y_continuous(limits=ylim)+
       theme_bw() + xlab("log2 ratio") + ylab(paste0("-log10(", yType, ")"))+
@@ -334,13 +340,14 @@ ezVolcano <- function(log2Ratio, pValue, yType=c("p-value", "FDR"),
       theme(plot.title=element_text(hjust=0.5), legend.title=element_blank())
     if(!is.null(labelGenes)){
       stopifnot(!is.null(toPlot$names))
-      p <- p + geom_label_repel(data=dplyr::filter(toPlot, names%in% labelGenes),
+      p <- p + geom_text_repel(data=dplyr::filter(toPlot, names%in% labelGenes),
                                 aes(label=names), fontface = 'bold.italic',
-                                box.padding = 0.35, 
-                                point.padding = 0.5, #size=7,
-                                segment.color = 'grey50', 
-                                segment.size=1, 
-                                arrow = arrow(length = unit(0.01, 'npc')))
+                                #box.padding = 0.35, 
+                                #point.padding = 0.5, #size=7,
+                                segment.color = 'grey50'
+                                #segment.size=1, 
+                                #arrow = arrow(length = unit(0.01, 'npc'))
+                               )
     }
   }
   
@@ -571,7 +578,7 @@ ezXYScatter.2 = function(xVec, yVec, absentColor="gray", shrink=FALSE,
                  // d.points is an array of objects which, in this case,
                  // is length 1 since the click is tied to 1 point.
                  var pt = d.points[0];
-                 var genecardUrl = 'http://www.ihop-net.org/UniPub/iHOP/index.html?field=synonym&ncbi_tax_id=0&search=';
+                 var genecardUrl = 'https://www.ncbi.nlm.nih.gov/gene/?term=';
                  var url = genecardUrl.concat(pt.data.text[pt.pointNumber]);
                  // DISCLAIMER: this won't work from RStudio
                  window.open(url);
@@ -612,7 +619,7 @@ ezXYScatter.2 = function(xVec, yVec, absentColor="gray", shrink=FALSE,
     line[["line"]] <- list(color = "blue", dash="dash")
     lines <- c(lines, list(line))
     
-    p <- p %>% layout(shapes=lines)
+    p <- p %>% plotly::layout(shapes=lines)
     l <- list(font = list(size = 20))
     ftitle <- list(size=20)
     ftick <- list(size=20)
@@ -624,20 +631,20 @@ ezXYScatter.2 = function(xVec, yVec, absentColor="gray", shrink=FALSE,
       pad = 0
     )
     # with log10 scales
-    p <- layout(p, xaxis=list(type="log", title=xlab, 
-                              titlefont=ftitle,
-                              tickfont=ftick),
-                yaxis=list(type="log", title=ylab,
-                           titlefont=ftitle,
-                           tickfont=ftick),
-                title=main, font=ftitle,
-                legend=l, margin=m)
+    p <- plotly::layout(p, xaxis=list(type="log", title=xlab, 
+                                      titlefont=ftitle,
+                                      tickfont=ftick),
+                        yaxis=list(type="log", title=ylab,
+                                   titlefont=ftitle,
+                                   tickfont=ftick),
+                        title=main, font=ftitle,
+                        legend=l, margin=m)
   }else{
     ## Reorder the points in the data.frame
     ## ggplot2 plots in the native order
     toPlot <- toPlot[order(match(toPlot$types, 
                                  c("Absent", "Present", colnames(types)))), ]
-    p <- ggplot(toPlot, aes(x, y)) + geom_point(aes(col=types)) +
+    p <- ggplot(toPlot, aes(x, y)) + geom_point(size=1, aes(col=types)) +
       scale_color_manual(values=typesColours) +
       scale_x_log10() + scale_y_log10() +
       theme_bw() + xlab(xlab) + ylab(ylab) + 
@@ -1128,4 +1135,10 @@ getBinColors = function(binNames, colorSet=c("darkorange", "gray70", "gray50", "
   colors = colorRampPalette(colorSet)(length(binNames))
   names(colors) = binNames
   return(colors)
+}
+
+## Create ggplot2 default colour palette
+gg_color_hue <- function(n) {
+  hues = seq(15, 375, length = n + 1)
+  hcl(h = hues, l = 65, c = 100)[1:n]
 }

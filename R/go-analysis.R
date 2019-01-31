@@ -199,11 +199,27 @@ twoGroupsGOSE = function(param, se, method="Wallenius"){
   godata <- prepareGOData(param, se)
   seqAnno <- data.frame(rowData(se), row.names=rownames(se),
                         check.names = FALSE, stringsAsFactors=FALSE)
+  
   upGenes <- godata$upGenes
   downGenes <- godata$downGenes
   bothGenes <- godata$bothGenes
   presentGenes <- godata$presentGenes
   normalizedAvgSignal <- godata$normalizedAvgSignal
+  
+  if (param$featureLevel != "gene"){
+    genes = getGeneMapping(param, seqAnno)
+    seqAnno = aggregateGoAnnotation(seqAnno, genes)
+    if (!is.null(normalizedAvgSignal)){ ## if its not an identity mapping
+      normalizedAvgSignal = tapply(normalizedAvgSignal[names(genes)], genes, mean)
+      normalizedAvgSignal = normalizedAvgSignal[rownames(seqAnno)]
+    }
+    if (is.null(genes)){
+      stop("no probe 2 gene mapping found found for ")
+    }
+  } else {
+    genes = rownames(seqAnno)
+    names(genes) = genes
+  }
   
   job = ezJobStart("twoGroupsGO")
   require("GOstats", warn.conflicts=WARN_CONFLICTS, quietly=!WARN_CONFLICTS)
@@ -317,6 +333,17 @@ ezEnricher <- function(param, se){
   bothGenes <- godata$bothGenes
   presentGenes <- godata$presentGenes
   
+  if (param$featureLevel != "gene"){
+    genes = getGeneMapping(param, seqAnno)
+    seqAnno = aggregateGoAnnotation(seqAnno, genes)
+    if (is.null(genes)){
+      stop("no probe 2 gene mapping found found for ")
+    }
+  } else {
+    genes = rownames(seqAnno)
+    names(genes) = genes
+  }
+  
   ontologies = c("BP", "MF", "CC")
   
   goResults = ezMclapply(ontologies, function(onto){
@@ -344,34 +371,40 @@ ezEnricher <- function(param, se){
     enrichUp <- enricher(gene=upGenes,
                          universe=presentGenes,
                          TERM2GENE=go2geneDF)
-    tempTable <- enrichUp@result
-    if(nrow(tempTable) != 0L){
-      tempTable$Description <- Term(GOTERM[tempTable$ID])
-      #tempTable$Description <- substr(Term(GOTERM[tempTable$ID]), 1, 30)
-      tempTable$geneName <- sapply(relist(geneid2name[unlist(strsplit(tempTable$geneID, "/"))], strsplit(tempTable$geneID, "/")), paste, collapse="/")
-      enrichUp@result <- tempTable
+    if(!is.null(enrichUp)){
+      tempTable <- enrichUp@result
+      if(nrow(tempTable) != 0L){
+        tempTable$Description <- Term(GOTERM[tempTable$ID])
+        #tempTable$Description <- substr(Term(GOTERM[tempTable$ID]), 1, 30)
+        tempTable$geneName <- sapply(relist(geneid2name[unlist(strsplit(tempTable$geneID, "/"))], strsplit(tempTable$geneID, "/")), paste, collapse="/")
+        enrichUp@result <- tempTable
+      }
     }
     
     enrichDown <- enricher(gene=downGenes,
                            universe=presentGenes,
                            TERM2GENE=go2geneDF)
-    tempTable <- enrichDown@result
-    if(nrow(tempTable) != 0L){
-      tempTable$Description <- Term(GOTERM[tempTable$ID])
-      #tempTable$Description <- substr(Term(GOTERM[tempTable$ID]), 1, 30)
-      tempTable$geneName <- sapply(relist(geneid2name[unlist(strsplit(tempTable$geneID, "/"))], strsplit(tempTable$geneID, "/")), paste, collapse="/")
-      enrichDown@result <- tempTable
+    if(!is.null(enrichDown)){
+      tempTable <- enrichDown@result
+      if(nrow(tempTable) != 0L){
+        tempTable$Description <- Term(GOTERM[tempTable$ID])
+        #tempTable$Description <- substr(Term(GOTERM[tempTable$ID]), 1, 30)
+        tempTable$geneName <- sapply(relist(geneid2name[unlist(strsplit(tempTable$geneID, "/"))], strsplit(tempTable$geneID, "/")), paste, collapse="/")
+        enrichDown@result <- tempTable
+      }
     }
     
     enrichBoth <- enricher(gene=bothGenes,
                            universe=presentGenes,
                            TERM2GENE=go2geneDF)
-    tempTable <- enrichBoth@result
-    if(nrow(tempTable) != 0L){
-      tempTable$Description <- Term(GOTERM[tempTable$ID])
-      #tempTable$Description <- substr(Term(GOTERM[tempTable$ID]), 1, 30)
-      tempTable$geneName <- sapply(relist(geneid2name[unlist(strsplit(tempTable$geneID, "/"))], strsplit(tempTable$geneID, "/")), paste, collapse="/")
-      enrichBoth@result <- tempTable
+    if(!is.null(enrichBoth)){
+      tempTable <- enrichBoth@result
+      if(nrow(tempTable) != 0L){
+        tempTable$Description <- Term(GOTERM[tempTable$ID])
+        #tempTable$Description <- substr(Term(GOTERM[tempTable$ID]), 1, 30)
+        tempTable$geneName <- sapply(relist(geneid2name[unlist(strsplit(tempTable$geneID, "/"))], strsplit(tempTable$geneID, "/")), paste, collapse="/")
+        enrichBoth@result <- tempTable
+      }
     }
     
     result = list(enrichUp=enrichUp, enrichDown=enrichDown,
@@ -395,6 +428,17 @@ ezGSEA <- function(param, se){
   geneid2name <- setNames(seqAnno$gene_name, seqAnno$gene_id)
   geneList <- setNames(rowData(se)$log2Ratio, rowData(se)$gene_id)
   geneList <- sort(geneList, decreasing = TRUE)
+  
+  if (param$featureLevel != "gene"){
+    genes = getGeneMapping(param, seqAnno)
+    seqAnno = aggregateGoAnnotation(seqAnno, genes)
+    if (is.null(genes)){
+      stop("no probe 2 gene mapping found found for ")
+    }
+  } else {
+    genes = rownames(seqAnno)
+    names(genes) = genes
+  }
   
   ontologies = c("BP", "MF", "CC")
   

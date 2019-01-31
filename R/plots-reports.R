@@ -21,7 +21,7 @@
 addQcScatterPlots = function(doc, param, design, conds, rawData, signalCond, isPresentCond, types=NULL){
   samples = rownames(design)
   nConds = length(unique(conds))
-  signal = getSignalSE(rawData)
+  signal = getSignal(rawData)
   signal[signal <= 0] = NA
   isPresent = ezPresentFlags(signal, presentFlag=assays(rawData)$presentFlag, 
                              param=param, isLog=metadata(rawData)$isLog)
@@ -36,9 +36,9 @@ addQcScatterPlots = function(doc, param, design, conds, rawData, signalCond, isP
   } else {
     gcTypes = NULL
   }
-  if (!is.null(rowData(rawData)$width)){
-    widthTypes = data.frame("width < 500nt"=as.numeric(rowData(rawData)$width) < 500, 
-                            "width > 5000nt"=as.numeric(rowData(rawData)$width) > 5000,
+  if (!is.null(rowData(rawData)$featWidth)){
+    widthTypes = data.frame("width < 500nt"=as.numeric(rowData(rawData)$featWidth) < 500, 
+                            "width > 5000nt"=as.numeric(rowData(rawData)$featWidth) > 5000,
                             check.names=FALSE)
   } else {
     widthTypes = NULL
@@ -116,7 +116,7 @@ countQcScatterPlots = function(param, design, conds, rawData, signalCond,
                                isPresentCond, types=NULL){
   samples = rownames(design)
   nConds = length(unique(conds))
-  signal = getSignalSE(rawData)
+  signal = getSignal(rawData)
   signal[signal <= 0] = NA
   isPresent = ezPresentFlags(signal, presentFlag=assays(rawData)$presentFlag, 
                              param=param, isLog=metadata(rawData)$isLog)
@@ -128,9 +128,9 @@ countQcScatterPlots = function(param, design, conds, rawData, signalCond,
   } else {
     gcTypes = NULL
   }
-  if (!is.null(rowData(rawData)$width)){
-    widthTypes = data.frame("width < 500nt"=as.numeric(rowData(rawData)$width) < 500, 
-                            "width > 5000nt"=as.numeric(rowData(rawData)$width) > 5000,
+  if (!is.null(rowData(rawData)$featWidth)){
+    widthTypes = data.frame("width < 500nt"=as.numeric(rowData(rawData)$featWidth) < 500, 
+                            "width > 5000nt"=as.numeric(rowData(rawData)$featWidth) > 5000,
                             check.names=FALSE)
   } else {
     widthTypes = NULL

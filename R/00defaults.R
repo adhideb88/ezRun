@@ -27,23 +27,32 @@
 ##' globalDefaultTypedParams$ram
 ##' parseOptions("a=5 b='foo with space' c=foo")
 ## current implementation: every param needs a default value
-ezParam = function(userParam=list(), globalDefaults=getGlobalDefaults(), appDefaults=ezFrame()){
+ezParam = function(userParam=list(), globalDefaults=getGlobalDefaults(),
+                   appDefaults=ezFrame()){
 
   specialParam = parseOptions(userParam$specialOptions)
   userParam[names(specialParam)] = specialParam
-  defaults = rbind(globalDefaults[setdiff(rownames(globalDefaults), rownames(appDefaults)), ], appDefaults)
+  defaults = rbind(globalDefaults[setdiff(rownames(globalDefaults), 
+                                          rownames(appDefaults)), ], 
+                   appDefaults)
   unknownParams = setdiff(names(userParam), rownames(defaults))
   sapply(unknownParams, function(x){message("unknown param: ", x)})
   for (nm in rownames(defaults)){
-    value = ifelse(!is.null(userParam[[nm]]), userParam[[nm]], defaults[nm, "DefaultValue"])
-    userParam[[nm]] = switch(defaults[nm, "Type"],
-                         integer=as.integer(value),                         
-                         numeric=as.numeric(value),
-                         character=as.character(value),
-                         charVector=unlist(strsplit(value, ",", fixed=TRUE)),
-                         logical=as.logical(value),
-                         stop("unsupported type: ", defaults[nm, "Type"]))
+    if(!is.null(userParam[[nm]])){
+      value <- userParam[[nm]]
+    } else {
+      value <- defaults[nm, "DefaultValue"]
+    }
+    userParam[[nm]] <- switch(defaults[nm, "Type"],
+                              integer=as.integer(value),                         
+                              numeric=as.numeric(value),
+                              character=as.character(value),
+                              charVector=if (length(value) > 1) value else unlist(strsplit(value, ",", fixed=TRUE)),
+                              charList=if (length(value) > 1) value else parseListOptions(value),
+                              logical=as.logical(value),
+                              stop("unsupported type: ", defaults[nm, "Type"]))
   }
+  
   ## avoid special characters in any option
   lapply(userParam, function(optString){
     if (class(optString) == "character" && any(grepl("[;\\{}$%#!*]", optString))){
@@ -51,11 +60,11 @@ ezParam = function(userParam=list(), globalDefaults=getGlobalDefaults(), appDefa
     }
   })
   
-  
   # we build the ezRef object from hints in the general parameters
   if (is.null(userParam$ezRef)){
     userParam$ezRef = EzRef(userParam)
   }
+  
   return(userParam)
 }
 
@@ -65,6 +74,18 @@ getGlobalDefaults = function(){
   } else {
     ezRead.table(system.file("extdata/EZ_PARAM_DEFAULTS.txt", package="ezRun", mustWork = TRUE), comment.char="#")  
   }
+}
+
+# 'DC-like=Lgals3,Napsa B;cells=Cd79a,Ly6d;' to a named list
+parseListOptions <- function(optString){
+  params <- strsplit(optString, ";")[[1]]
+  paramsList <- list()
+  param <- params[1]
+  for(param in params){
+    param=strsplit(param, "=")[[1]]
+    paramsList[[param[1]]] <- trimws(strsplit(param[2], ",")[[1]])
+  }
+  return(paramsList)
 }
 
 ##' @describeIn ezParam Used to parse additional options specified in \code{userParam$specialOptions}.
@@ -120,7 +141,7 @@ parseOptions = function(optString){
 ##' ezIsSpecified(c("this","is"))
 ##' ezIsSpecified(c("","this isn't"))
 ezIsSpecified = function(x){
-  !is.null(x) && length(x) > 0 && x[1] != "" && !is.na(x)
+  !is.null(x) && length(x) > 0 && x[1] != "" && !is.na(x) && x[1] != "NA"
 }
 
 ##' @title Wrapper for data.frame suitable for data processing rather than stastistical modelling

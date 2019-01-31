@@ -1,0 +1,392 @@
+---
+title: "`r ans$param$name`"
+author: "Functional Genomics Center Zurich"
+output: 
+  html_document:
+    self_contained: false
+    includes:
+      in_header: fgcz_header.html
+    css: fgcz.css
+editor_options: 
+  chunk_output_type: console
+---
+
+Started on `r format(Sys.time(), "%Y-%m-%d %H:%M:%S")`
+
+```{r setup, include=FALSE}
+## input for this report: ldat, tSNE_data, param
+knitr::opts_chunk$set(echo = TRUE)
+
+require(ezRun)
+require(velocyto.R)
+require(Matrix)
+
+# debug
+# title: "`r ans$param$name`"
+# 10X
+# ans <- readRDS("/export/local/scratch/gtan/dev/RNAVelocity-p2284/SCReport_SCRNAVelocity/ans.rds")
+# ans <- readRDS("/scratch/gtan/dev/quickdev/ans.rds")
+# end of debug
+
+ldat <- ans$ldat
+tSNE_data <- ans$tSNE_data
+cell.dist <- ans$cell.dist
+param <- ans$param
+
+cell.colorsPalette <- setNames(gg_color_hue(length(levels(tSNE_data$cluster))),
+                               levels(tSNE_data$cluster))
+cell.colors <- cell.colorsPalette[tSNE_data$cluster]
+names(cell.colors) <- tSNE_data$cells
+emb <- data.frame(row.names=tSNE_data$cells,
+                  tSNE_data[ ,c("X", "Y")])
+emb <- as.matrix(emb)
+
+if(param$scProtocol == "smart-Seq2"){
+  emat_cutoff <- 5
+  nmat_cutoff <- 1
+  smat_cutoff <- 0.5
+  fit.quantile <- 0.05
+  kCells <- 5
+  cell.cex <- 1
+  arrow.scale <- 3
+  show.grid.flow <- FALSE
+  grid.n <- 20
+}else if(param$scProtocol == "10X"){
+  emat_cutoff <- 0.5
+  nmat_cutoff <- 0.05
+  smat_cutoff <- 0.005
+  fit.quantile <- 0.02
+  kCells <- 20
+  cell.cex <- 0.8
+  arrow.scale <- 5
+  show.grid.flow <- TRUE
+  grid.n <- 40
+}else{
+  stop("Unsupported single cell protocol!")
+}
+cell.alpha <- 0.7
+```
+
+```{r gene filtering processing, echo=FALSE}
+# exonic read (spliced) expression matrix
+emat <- ldat$spliced
+# intronic read (unspliced) expression matrix
+nmat <- ldat$unspliced
+# spanning read (intron+exon) expression matrix
+smat <- ldat$spanning
+
+# Fix the barcode for 10X data
+if(param$scProtocol == "10X"){
+  colnames(emat) <- sub("x$", "-1", colnames(emat))
+  colnames(nmat) <- sub("x$", "-1", colnames(nmat))
+  if(!is.null(smat)){
+    colnames(smat) <- sub("x$", "-1", colnames(smat))
+  }
+}
+
+# restrict to cells that from filtering upstream
+emat <- emat[ , rownames(emb)]
+nmat <- nmat[ , rownames(emb)]
+if(!is.null(smat)){
+  smat <- smat[ , rownames(emb)]
+}
+
+# filter expression matrices based on some minimum max-cluster averages
+emat <- filter.genes.by.cluster.expression(emat, cell.colors,
+                                           min.max.cluster.average = emat_cutoff)
+nmat <- filter.genes.by.cluster.expression(nmat, cell.colors,
+                                           min.max.cluster.average = nmat_cutoff)
+if(!is.null(smat)){
+  smat <- filter.genes.by.cluster.expression(smat, cell.colors,
+                                             min.max.cluster.average = smat_cutoff)
+}
+```
+
+## RNA Velocity Results {.tabset}
+
+### Gene filtering
+Spliced expression magnitude distribution across genes:
+
+```{r gene filtering plot, echo=FALSE}
+hist(log10(Matrix::rowSums(ldat$spliced)+1), col='wheat',
+     xlab='log10[ number of reads + 1]',
+     main='number of reads per gene')
+```
+
+```{r gene filtering output, echo=FALSE, results='markup'}
+cat("The numner of genes after filtering by required minimum average expression count for exonic (spliced) and intronic (unspliced) reads: \n")
+length(intersect(rownames(emat), rownames(nmat)))
+if(!is.null(smat)){
+  cat("The numner of genes after filtering by required minimum average expression count for exonic (spliced), intronic (unspliced) reads and spanning (intron+exon) reads: \n")
+  length(intersect(intersect(rownames(emat), rownames(nmat)), rownames(smat)))
+}
+```
+
+### Velocity estimates variant 1
+Velocity estimates using gene-relative model.
+
+We’ll start with what is perhaps the most robust estimate, that combines cell kNN pooling with the gamma fit based on an extreme quantiles:
+
+Using min/max quantile fit, in which case gene-specific offsets do not require spanning read (smat) fit. Here the fit is based on the top/bottom 5% of cells (by spliced expression magnitude).
+
+```{r velocity 1 estimate, echo=FALSE, message=FALSE, results='hide'}
+rvel.qf <- gene.relative.velocity.estimates(emat, nmat, deltaT=1,
+                                            kCells=kCells,
+                                            cell.dist=cell.dist,
+                                            fit.quantile=fit.quantile)
+```
+
+We visualize the velocities by projecting observed and extrapolated cells onto the first 5 PCs:
+
+```{r velocity 1 PCA, echo=FALSE, message=FALSE, results='hide', fig.width=14, fig.height=14}
+pca.velocity.plot(rvel.qf, nPcs=5, plot.cols=2,
+                  cell.colors=ac(cell.colors, alpha=0.7),
+                  cex=1.2, pcount=0.1, pc.multipliers=c(1,-1,-1,-1,-1),
+                  show.grid.flow=TRUE, min.grid.cell.mass=0.5,
+                  grid.n=grid.n, arrow.lwd=2)
+```
+
+#### Fitting of individual genes
+Show the fitting of individual genes if given.
+
+```{r fitting gene 1, echo=FALSE, message=FALSE, results='hide', fig.width=14}
+# define custom pallet for expression magnitude
+if(ezIsSpecified(param$markersToCheck)){
+  for(theGene in param$markersToCheck){
+    ## Some of the genes may not be available.
+    try(gene.relative.velocity.estimates(emat,nmat, kCells = kCells,
+                                         cell.dist=cell.dist,
+                                         fit.quantile=fit.quantile,
+                                         old.fit=rvel.qf,
+                                         show.gene=theGene,
+                                         cell.emb=emb,
+                                         cell.colors=cell.colors))
+  }
+}
+```
+
+#### Visualization on an existing embedding
+Here we use t-SNE embedding from the upstream clustering.
+
+```{r velocity 1 tsne, echo=FALSE, results='hide', message=FALSE, fig.width=10, fig.height=8}
+show.velocity.on.embedding.cor(emb, rvel.qf, n=100, scale='sqrt',
+                               cell.colors=ac(cell.colors,
+                                              alpha=cell.alpha),
+                               cex=cell.cex, arrow.scale=arrow.scale,
+                               arrow.lwd=1)
+legend("topleft", legend=names(cell.colorsPalette),
+       pch=19, col=cell.colorsPalette)
+
+show.velocity.on.embedding.cor(emb, rvel.qf, n=100, scale='sqrt',
+                               cell.colors=ac(cell.colors,
+                                              alpha=cell.alpha),
+                               cex=cell.cex, arrow.scale=arrow.scale,
+                               show.grid.flow=TRUE,
+                               min.grid.cell.mass=0.5, grid.n=grid.n,
+                               arrow.lwd=2)
+legend("topleft", legend=names(cell.colorsPalette),
+       pch=19, col=cell.colorsPalette)
+```
+
+#### Cell trajectory modeling
+A similar function can be used to model central trajectories by directed diffusion on embedding.
+This is disable on 10X data.
+
+```{r velocity 1 tragectory, echo=FALSE, message=FALSE, results='hide', eval=TRUE, fig.width=10, fig.height=8}
+if(param$scProtocol != "10X"){
+x <- show.velocity.on.embedding.eu(emb, rvel.qf, n=40, scale='sqrt',
+                                   cell.colors=ac(cell.colors,
+                                                  alpha=cell.alpha),
+                                   cex=cell.cex, nPcs=30, sigma=2.5,
+                                   show.trajectories=TRUE,
+                                   diffusion.steps=400,
+                                   n.trajectory.clusters=15,
+                                   ntop.trajectories=1, embedding.knn=T,
+                                   control.for.neighborhood.density=TRUE,
+                                   n.cores=param$cores)
+legend("topleft", legend=names(cell.colorsPalette),
+       pch=19, col=cell.colorsPalette)
+}
+```
+
+### Velocity estimates variant 2
+Use spanning reads (smat) to fit the gene offsets. This will result in more accurate offset estimates, but for much fewer genes (spanning reads are rare).
+This variant is not available for 10X data.
+
+```{r velocity 2 estimate, echo=FALSE, message=FALSE, results='hide'}
+if(!is.null(smat)){
+  rvel <- gene.relative.velocity.estimates(emat,nmat,smat=smat,
+                                           kCells=kCells,
+                                           cell.dist=cell.dist,
+                                           fit.quantile=fit.quantile,
+                                           diagonal.quantiles=TRUE)
+}
+```
+
+We visualize the velocities by projecting observed and extrapolated cells onto the first 5 PCs:
+
+```{r velocity 2 PCA, echo=FALSE, message=FALSE, results='hide', fig.width=14, fig.height=14}
+if(!is.null(smat)){
+pca.velocity.plot(rvel, nPcs=5, plot.cols=2, 
+                  cell.colors=ac(cell.colors,alpha=0.7),
+                  cex=1.2, pcount=0.1, pc.multipliers=c(1,-1,1,1,1),
+                  show.grid.flow=TRUE, min.grid.cell.mass=0.5,
+                  grid.n=grid.n, arrow.lwd=2)
+}
+```
+
+#### Fitting of individual genes
+Show the fitting of individual genes if given.
+
+```{r fitting gene 2, echo=FALSE, message=FALSE, results='hide', fig.width=14}
+# define custom pallet for expression magnitude
+if(!is.null(smat)){
+if(ezIsSpecified(param$markersToCheck)){
+  for(theGene in param$markersToCheck){
+    ## Some of the genes may not be available.
+    try(gene.relative.velocity.estimates(emat,nmat, kCells = kCells,
+                                         cell.dist=cell.dist,
+                                         fit.quantile=fit.quantile,
+                                         old.fit=rvel,
+                                         show.gene=theGene,
+                                         cell.emb=emb,
+                                         cell.colors=cell.colors))
+  }
+}
+}
+```
+
+#### Visualization on an existing embedding
+Here we use t-SNE embedding from the upstream clustering.
+
+```{r velocity 2 tsne, echo=FALSE, message=FALSE, results='hide', fig.width=10, fig.height=8}
+if(!is.null(smat)){
+show.velocity.on.embedding.cor(emb, rvel, n=100, scale='sqrt',
+                               cell.colors=ac(cell.colors,
+                                              alpha=cell.alpha),
+                               cex=cell.cex, arrow.scale=arrow.scale,
+                               arrow.lwd=1)
+legend("topleft", legend=names(cell.colorsPalette),
+       pch=19, col=cell.colorsPalette)
+
+show.velocity.on.embedding.cor(emb, rvel, n=100, scale='sqrt',
+                               cell.colors=ac(cell.colors,
+                                              alpha=cell.alpha),
+                               cex=cell.cex, arrow.scale=arrow.scale,
+                               show.grid.flow=TRUE, min.grid.cell.mass=0.5,
+                               grid.n=grid.n, arrow.lwd=2)
+legend("topleft", legend=names(cell.colorsPalette),
+       pch=19, col=cell.colorsPalette)
+}
+```
+
+#### Cell trajectory modeling
+A similar function can be used to model central trajectories by directed diffusion on embedding.
+This is disable on 10X data.
+
+```{r velocity 2 tragectory, echo=FALSE, message=FALSE, results='hide', eval=TRUE, fig.width=10, fig.height=8}
+if(!is.null(smat)){
+  if(param$scProtocol != "10X"){
+x <- show.velocity.on.embedding.eu(emb, rvel, n=40, scale='sqrt',
+                                   cell.colors=ac(cell.colors,
+                                                  alpha=cell.alpha),
+                                   cex=cell.cex, nPcs=30, sigma=2.5,
+                                   show.trajectories=TRUE,
+                                   diffusion.steps=400,
+                                   n.trajectory.clusters=15,
+                                   ntop.trajectories=1, embedding.knn=T,
+                                   control.for.neighborhood.density=TRUE,
+                                   n.cores=param$cores)
+legend("topleft",legend=names(cell.colorsPalette),
+       pch=19, col=cell.colorsPalette)
+}
+}
+```
+
+### Velocity estimates variant 3
+Here we calculate the most basic version of velocity estimates, using relative gamma fit, without cell kNN smoothing (i.e. actual single-cell velocity).
+This is not suitable for 10X data.
+
+```{r velocity 3 estimate, echo=FALSE, results='hide', message=FALSE}
+rvel1 <- gene.relative.velocity.estimates(emat, nmat, deltaT=1,
+                                          deltaT2=1, kCells=1,
+                                          cell.dist=cell.dist,
+                                          fit.quantile=fit.quantile)
+
+```
+
+```{r velocity 3 PCA, echo=FALSE, results='hide', message=FALSE, fig.width=14, fig.height=14}
+pca.velocity.plot(rvel1, nPcs=5, plot.cols=2, 
+                  cell.colors=ac(cell.colors,alpha=0.7),
+                  cex=1.2, pcount=0.1, pc.multipliers=c(1,-1,1,1,1),
+                  show.grid.flow=TRUE, min.grid.cell.mass=0.5,
+                  grid.n=grid.n, arrow.lwd=2)
+```
+
+#### Fitting of individual genes
+Show the fitting of individual genes if given.
+
+```{r fitting gene 3, echo=FALSE, message=FALSE, results='hide', fig.width=14}
+# define custom pallet for expression magnitude
+if(ezIsSpecified(param$markersToCheck)){
+  for(theGene in param$markersToCheck){
+    ## Some of the genes may not be available.
+    try(gene.relative.velocity.estimates(emat,nmat, kCells = 1,
+                                         cell.dist=cell.dist,
+                                         fit.quantile=fit.quantile,
+                                         old.fit=rvel1,
+                                         show.gene=theGene,
+                                         cell.emb=emb,
+                                         cell.colors=cell.colors))
+  }
+}
+```
+
+#### Visualization on an existing embedding
+Here we use t-SNE embedding from the upstream clustering.
+
+```{r velocity 3 tsne, echo=FALSE, message=FALSE, results='hide', fig.width=10, fig.height=10}
+show.velocity.on.embedding.cor(emb, rvel1, n=100, scale='sqrt',
+                               cell.colors=ac(cell.colors,
+                                              alpha=cell.alpha),
+                               cex=cell.cex, arrow.scale=arrow.scale,
+                               arrow.lwd=1)
+legend("topleft", legend=names(cell.colorsPalette),
+       pch=19, col=cell.colorsPalette)
+
+show.velocity.on.embedding.cor(emb, rvel1, n=100, scale='sqrt',
+                               cell.colors=ac(cell.colors,
+                                              alpha=cell.alpha),
+                               cex=cell.cex, arrow.scale=arrow.scale,
+                               show.grid.flow=TRUE,
+                               min.grid.cell.mass=0.5, grid.n=grid.n,
+                               arrow.lwd=2)
+legend("topleft", legend=names(cell.colorsPalette),
+       pch=19, col=cell.colorsPalette)
+```
+
+#### Cell trajectory modeling
+A similar function can be used to model central trajectories by directed diffusion on embedding.
+This is disable on 10X data.
+
+```{r velocity 3 tragectory, echo=FALSE, message=FALSE, results='hide', eval=TRUE, fig.width=10, fig.height=8}
+if(param$scProtocol != "10X"){
+x <- show.velocity.on.embedding.eu(emb, rvel1, n=40, scale='sqrt',
+                                   cell.colors=ac(cell.colors,
+                                                  alpha=cell.alpha),
+                                   cex=cell.cex, nPcs=30, sigma=2.5,
+                                   show.trajectories=TRUE,
+                                   diffusion.steps=400,
+                                   n.trajectory.clusters=15,
+                                   ntop.trajectories=1, embedding.knn=T,
+                                   control.for.neighborhood.density=TRUE,
+                                   n.cores=param$cores)
+legend("topleft",legend=names(cell.colorsPalette),
+       pch=19, col=cell.colorsPalette)
+}
+```
+
+### SessionInfo
+```{r, echo=FALSE}
+sessionInfo()
+```

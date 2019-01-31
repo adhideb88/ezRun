@@ -21,13 +21,15 @@ packages <- c("testthat", "knitr", "gage", "goseq", "ChIPpeakAnno",
               "GOstats", "annotate", "bitops", "edgeR", "limma", "S4Vectors",
               "VariantAnnotation", "rmarkdown", "plotly", "scran",
               "ReporteRsjars", "data.table", "kableExtra", "htmlwidgets",
-              "RSelenium", "webshot", "clusterProfiler", "dupRadar",
-              "taxize")
+              "webshot", "clusterProfiler", "dupRadar",
+              "taxize", "SingleCellExperiment", "SummarizedExperiment",
+              "scater", "DropletUtils")
 packages <- setdiff(packages, rownames(installed.packages()))
-biocLite(packages)
+BiocManager::install(packages)
+
+install_github("velocyto-team/velocyto.R")
 ```
 
 ## Dependencies of external software
-* phantomjs
-* bwa, bowtie, bowtie2, STAR, picard, sambamba
+* bwa, bowtie, bowtie2, STAR, picard, sambamba, samtools
 * lsof

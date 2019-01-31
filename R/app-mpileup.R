@@ -38,7 +38,7 @@ ezMethodMpileup = function(input=NA, output=NA, param=NA){
       ezSystem(paste("cp", bf, "local.bam"))
       ezSystem(paste("cp", paste0(bf, ".bai"), "local.bam.bai"))
     }
-    cmd = paste0(javaCall, " -jar ", "$Picard_jar", " AddOrReplaceReadGroups",
+    cmd = paste0(javaCall, " -jar ", Sys.getenv("Picard_jar"), " AddOrReplaceReadGroups",
                 " TMP_DIR=. MAX_RECORDS_IN_RAM=2000000", " I=", "local.bam",
                 " O=withRg.bam SORT_ORDER=coordinate",
                 " RGID=RGID_", sampleName, " RGPL=illumina RGSM=", sampleName, " RGLB=RGLB_", sampleName, " RGPU=RGPU_", sampleName,
@@ -47,7 +47,7 @@ ezMethodMpileup = function(input=NA, output=NA, param=NA){
     ezSystem(cmd)
     file.remove("local.bam")
     
-    cmd = paste0(javaCall, " -jar ", "$Picard_jar", " MarkDuplicates ",
+    cmd = paste0(javaCall, " -jar ", Sys.getenv("Picard_jar"), " MarkDuplicates ",
                 " TMP_DIR=. MAX_RECORDS_IN_RAM=2000000", " I=", "withRg.bam",
                 " O=", "dedup.bam",
                 " REMOVE_DUPLICATES=false", ## do not remove, do only mark
@@ -74,15 +74,13 @@ ezMethodMpileup = function(input=NA, output=NA, param=NA){
     return(obf)
   }, mc.cores=nBamsInParallel, mc.preschedule=FALSE)
   
-  ########### run mpileup/call/filter
-  mpileupCmd = paste("samtools", "mpileup",
+  mpileupCmd = paste("bcftools", "mpileup","-Ou",
                      "-f", param$ezRef["refFastaFile"],
-                     "--VCF",
                      param$mpileupOptions,
                      ifelse(param$region == "", "", paste("--region", param$region)),
                      paste(bamFilesClean, collapse=" "))
   callCmd = paste("bcftools", "call",
-                  "--output-type z",
+                  "-Ou",
                   param$callOptions,
                   "-") ## read from stdin
   filterCmd = paste("bcftools", "filter",

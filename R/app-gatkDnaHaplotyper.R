@@ -16,7 +16,7 @@ ezMethodGatkDnaHaplotyper = function(input=NA, output=NA, param=NA){
   genomeSeq = param$ezRef["refFastaFile"]
   sampleName = names(bamFile)
   if(param$addReadGroup){
-    cmd = paste0(javaCall, " -jar ", "$Picard_jar", " AddOrReplaceReadGroups",
+    cmd = paste0(javaCall, " -jar ", Sys.getenv("Picard_jar"), " AddOrReplaceReadGroups",
                " TMP_DIR=. MAX_RECORDS_IN_RAM=2000000", " I=local.bam",
                " O=withRg.bam SORT_ORDER=coordinate",
                " RGID=RGID_", sampleName, " RGPL=illumina RGSM=", sampleName, " RGLB=RGLB_", sampleName, " RGPU=RGPU_", sampleName,
@@ -26,7 +26,7 @@ ezMethodGatkDnaHaplotyper = function(input=NA, output=NA, param=NA){
   }
   
   if(param$markDuplicates){
-    cmd = paste0(javaCall, " -jar ", "$Picard_jar", " MarkDuplicates ",
+    cmd = paste0(javaCall, " -jar ", Sys.getenv("Picard_jar"), " MarkDuplicates ",
                  " TMP_DIR=. MAX_RECORDS_IN_RAM=2000000", " I=withRg.bam",
                  " O=dedup.bam",
                  " REMOVE_DUPLICATES=false",
@@ -51,6 +51,9 @@ ezMethodGatkDnaHaplotyper = function(input=NA, output=NA, param=NA){
     ezSystem(paste("samtools", "index", "withRg.bam"))
   }
   
+  if(param$targetFile != ''){
+    param$targetFile = file.path(TARGET_ENRICHMENT_DESIGN_DIR, param$targetFile)
+  }
   
   #BaseRecalibration is done only if known sites are available
   if(param$knownSitesAvailable){
@@ -67,7 +70,6 @@ ezMethodGatkDnaHaplotyper = function(input=NA, output=NA, param=NA){
               "-nct", param$cores)
   
   if(param$targetFile != ''){
-    param$targetFile = file.path(TARGET_ENRICHMENT_DESIGN_DIR, param$targetFile)
     cmd = paste(cmd,
                 "-L", param$targetFile)
   }

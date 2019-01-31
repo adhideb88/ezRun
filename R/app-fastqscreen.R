@@ -11,7 +11,9 @@ ezMethodFastqScreen = function(input=NA, output=NA, param=NA,
   inputRaw <- input$copy()
   # Preprocessing
   if(input$readType() == "bam"){
-    fastqInput <- ezMethodBam2Fastq(input = input, param = param)
+    stopifnot(input$getLength() == 1L) ## We only support one uBam now.
+    fastqInput <- ezMethodBam2Fastq(input = input, param = param,
+                                    OUTPUT_PER_RG=TRUE)
     input <- ezMethodTrim(input = fastqInput, param = param)
     inputRaw <- fastqInput
   }else{
@@ -85,6 +87,10 @@ ezMethodFastqScreen = function(input=NA, output=NA, param=NA,
   if(param$paired)
     file.remove(input$getFullPaths("Read2"))
   
+  # debug
+ # save(fastqData_ppData, fastqData_rawData, speciesPercentageTop, krakenResult,
+ #      dataset, param, rRNA_strandInfo, file="fastqscreen.rda")
+  
   #create report
   setwdNew(basename(output$getColumn("Report")))
   
@@ -130,7 +136,7 @@ EzAppFastqScreen <-
                                         virusCheck=ezFrame(Type="logical",  DefaultValue=FALSE,  Description="check for viruses in unmapped data"),
                                         minAlignmentScore=ezFrame(Type="integer",  DefaultValue="-20",  Description="the min alignment score for bowtie2"),
                                         trimAdapter=ezFrame(Type="logical",  DefaultValue=TRUE,  Description="whether to search for the adapters and trim them"),
-                                        copyReadsLocally=ezFrame(Type="logical",  DefaultValue=TRUE,  Description="copy reads to scratch first"))
+                                        copyReadsLocally=ezFrame(Type="logical",  DefaultValue=FALSE,  Description="copy reads to scratch first"))
                 }
               )
   )
@@ -261,9 +267,9 @@ runKraken <- function(param, input){
     ezSystem(cmd)
     ##simple result filtering
     data = ezRead.table(resultFile, stringsAsFactors = F, row.names = NULL)
-    colnames(data) = c('readFraction', 'nreads_clade', 'nreads_taxon', 'rankCode', 'ncbi', 'name')
+    colnames(data) = c('readPercentage', 'nreads_clade', 'nreads_taxon', 'rankCode', 'ncbi', 'name')
     data = data[data$rankCode %in% c('U','S'), ]
-    data = data[order(data$readFraction, decreasing = T),]
+    data = data[order(data$readPercentage, decreasing = T),]
     data = data[!(data$ncbi %in% c(1, 131567, 136843)),] #remove general terms
     
     ##save table for report
@@ -342,3 +348,57 @@ collectBowtie2Output <- function(param, countFiles, readCount, virusResult = F){
   }
   return(speciesPercentageTop)
 }
+
+makeScatterplot = function(dataset, colname1, colname2){
+  if(colname1 %in% colnames(dataset) && colname2 %in% colnames(dataset) && nrow(dataset) > 1){
+    if(!all(dataset[[colname1]]==0) && !any(is.na(dataset[[colname1]])) && !all(dataset[[colname2]]==0) && !any(is.na(dataset[[colname2]]))){
+      ## LibCon column can all be 0 or NA. Then don't plot.
+      dataset = dataset[order(dataset[[colname1]],decreasing = T),]
+      corResult = cor.test(dataset[[colname1]],dataset[[colname2]],
+                           method = 'spearman')
+      regressionResult = lm(dataset[[colname2]]~dataset[[colname1]])
+      label1 = sub(' \\[.*','',colname1)
+      label2 = sub(' \\[.*','',colname2)
+      
+      ## plotly
+      require(plotly)
+      #a function to calculate your abline
+      xmin <- min(dataset[[colname1]]) - 5
+      xmax <- max(dataset[[colname1]]) + 5
+      intercept <- regressionResult$coefficients[1]
+      slope <- regressionResult$coefficients[2]
+      p_abline <- function(x, a, b){
+        y <- a * x + b
+        return(y)
+      }
+      
+      p <- plot_ly(x=dataset[[colname1]], y=dataset[[colname2]], 
+                   text=rownames(dataset)) %>%
+        add_markers() %>%
+        add_text(textposition = "top right") %>%
+        plotly::layout(showlegend = FALSE)
+      a <- list(
+        x = max(dataset[[colname1]]),
+        y = max(dataset[[colname2]]),
+        text = paste0("r=", round(corResult$estimate, 2)),
+        xref = "x",
+        yref = "y",
+        showarrow = FALSE
+      )
+      p <- p %>% plotly::layout(
+        shapes=list(type='line', line=list(dash="dash"),
+                    x0=xmin, x1=xmax,
+                    y0=p_abline(xmin, slope, intercept), 
+                    y1=p_abline(xmax, slope, intercept)),
+        annotations = a,
+        title= paste(label1, 'vs', label2), yaxis = list(title = label2),
+        xaxis = list(title = colname1)
+      )
+      return(p)
+    }
+  }
+}
+
+#dataset = ezRun::ezRead.table('/srv/gstore/projects/p2821/NovaSeq_20180829_NOV17_o4694/dataset.tsv')
+#makeScatterplot(dataset, colname1 ='RIN [Factor]', colname2='Read Count')
+#makeScatterplot(dataset, colname1 ='RIN [Factor]', colname2='LibConc_100_800bp [Characteristic]')

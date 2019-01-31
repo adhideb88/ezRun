@@ -51,7 +51,9 @@ fastq2bam <- function(fastqFn, refFn, bamFn, fastqI1Fn=NULL, fastqI2Fn=NULL){
 
 ### convert fastq files into a bam file, with read group tags
 fastqs2bam <- function(fastqFns, fastq2Fns=NULL, readGroupNames=NULL,
-                       bamFn){
+                       bamFn, platform="illumina", mc.cores=ezThreads()){
+  require(Biostrings)
+  
   if(!isTRUE(isValidEnvironments("picard"))){
     setEnvironments("picard")
   }
@@ -62,71 +64,171 @@ fastqs2bam <- function(fastqFns, fastq2Fns=NULL, readGroupNames=NULL,
   }
   sampleBasenames <- sub("\\.(fastq|fq)(\\.gz){0,1}$", "",
                          basename(fastqFns))
-  if(is.null(readGroupNames))
+  if(is.null(readGroupNames)){
     readGroupNames <- sampleBasenames
-  cmd <- paste("java -Djava.io.tmpdir=. -jar", 
+  }else{
+    stopifnot(length(fastqFns) == length(readGroupNames))
+  }
+  
+  emptyFastqs <- countReadsInFastq(fastqFns) == 0L
+  ## tempty fastq files fail in the picard tool of FastqToSam and MergeSamFiles
+  ## Convert and merge the non-empty fastqs first and alter the header of merged bam file
+    
+  cmd <- paste("java -Xmx4G -Djava.io.tmpdir=. -jar", 
                Sys.getenv("Picard_jar"), "FastqToSam",
-               paste0("F1=", fastqFns),
-               ifelse(isTRUE(paired), paste0("F2=", fastq2Fns), ""),
-               paste0("O=", sampleBasenames, ".bam"),
-               paste0("SM=", basename(fastqFns)),
-               paste0("READ_GROUP_NAME=", readGroupNames)
+               paste0("F1=", fastqFns)
                )
-  lapply(cmd, ezSystem)
+  if(isTRUE(paired)){
+    cmd <- paste(cmd, paste0("F2=", fastq2Fns))
+  }
+  cmd <- paste(cmd, paste0("O=", sampleBasenames, ".bam"),
+               paste0("SAMPLE_NAME=", readGroupNames),
+               paste0("LIBRARY_NAME=", readGroupNames),
+               paste0("READ_GROUP_NAME=", readGroupNames),
+               paste0("RUN_DATE=", format(Sys.time(), "%Y-%m-%dT%H:%M:%S+00:00")),
+               paste0("PLATFORM=", platform),
+               "SEQUENCING_CENTER=FGCZ")
+  
+  ezMclapply(cmd[!emptyFastqs], ezSystem, mc.preschedule=FALSE,
+             mc.cores = mc.cores)
+  
   ## picard tools merge
   cmd <- paste("java -Djava.io.tmpdir=. -jar", 
                Sys.getenv("Picard_jar"), "MergeSamFiles",
-               paste0("I=", paste0(sampleBasenames, ".bam"), collapse=" "),
+               paste0("I=", paste0(sampleBasenames, ".bam")[!emptyFastqs],
+                      collapse=" "),
                paste0("O=", bamFn),
                "USE_THREADING=true", "SORT_ORDER=queryname")
   ezSystem(cmd)
   file.remove(paste0(sampleBasenames, ".bam"))
   
+  if(any(emptyFastqs)){
+    tempHeaderFn <- tempfile(pattern="nonEmpty1", tmpdir=getwd(),
+                             fileext=".header")
+    cmd <- paste("samtools view -H", bamFn, ">", tempHeaderFn)
+    ezSystem(cmd)
+    
+    extraHeaders <- paste("@RG",
+                          paste0("ID:", readGroupNames[emptyFastqs]),
+                          paste0("SM:", readGroupNames[emptyFastqs]),
+                          paste0("LB:", readGroupNames[emptyFastqs]),
+                          paste0("PL:", platform),
+                          "CN:FGCZ",
+                          paste0("DT:", format(Sys.time(), "%Y-%m-%dT%H:%M:%S+00:00"),
+                                 sep="\t")
+    )
+    con <- file(tempHeaderFn, open="a")
+    writeLines(extraHeaders, con=con)
+    close(con)
+    
+    bamReheaderFn <- tempfile(pattern="reheader", tmpdir=getwd(),
+                              fileext = ".bam")
+    cmd <- paste("samtools reheader", tempHeaderFn, bamFn, ">", bamReheaderFn)
+    ezSystem(cmd)
+    
+    file.remove(bamFn)
+    file.rename(from=bamReheaderFn, to=bamFn)
+  }
+  
   invisible(bamFn)
 }
 
 ### Convert  bam/sam files into fastqs
-bam2fastq <- function(bamFns,
-                      fastqFns=sub("(\\.bam|\\.sam)$", "_R1.fastq", bamFns),
-                      fastq2Fns=sub("(\\.bam|\\.sam)$", "_R2.fastq", bamFns),
-                      paired=FALSE){
+bam2fastq <- function(bamFn, OUTPUT_PER_RG=TRUE, OUTPUT_DIR=".",
+                      paired=FALSE,
+                      fastqFns=sub("(\\.bam|\\.sam)$", "_R1.fastq", bamFn),
+                      fastq2Fns=sub("(\\.bam|\\.sam)$", "_R2.fastq", bamFn)){
+  setEnvironments("picard")
   
-  if(!isTRUE(isValidEnvironments("picard"))){
-    setEnvironments("picard")
+  if(isTRUE(OUTPUT_PER_RG)){
+    ## When OUTPUT_PER_RG is TRUE, we only process one uBam each time.
+    stopifnot(length(bamFn) == 1L)
+    ## I don't want to parse the bam header to get RG IDs
+    ## Put them in a tempdir and move to OUTPUT_DIR later
+    tempDIR <- paste("SamtoFastqTempDir", Sys.getpid(), sep="-")
+    dir.create(tempDIR)
+    on.exit(unlink(tempDIR, recursive=TRUE), add = TRUE)
+    cmd <- paste("java -Djava.io.tmpdir=. -jar", 
+                 Sys.getenv("Picard_jar"), "SamToFastq",
+                 paste0("I=", bamFn),
+                 paste0("OUTPUT_DIR=", tempDIR),
+                 "OUTPUT_PER_RG=true RG_TAG=ID"
+                 )
+    ezSystem(cmd)
+    fastqFns <- list.files(path=tempDIR, pattern="_1\\.fastq$")
+    fromFns <- file.path(tempDIR, fastqFns)
+    toFns <- file.path(OUTPUT_DIR, sub("_1\\.fastq$", "_R1.fastq", fastqFns))
+    file.rename(from=fromFns, to=toFns)
+    if(isTRUE(paired)){
+      file.rename(from=sub("_1\\.fastq$", "_2.fastq", fromFns), 
+                  to=sub("_R1\\.fastq$", "_R2.fastq", toFns)
+                  )
+    }
+    return(invisible(toFns))
+    ## This is not much slower than splitBambyRG and SamToFastq in parallel
+  }else{
+    cmd <- paste("java -Djava.io.tmpdir=. -jar", 
+                 Sys.getenv("Picard_jar"), "SamToFastq",
+                 paste0("I=", bamFn),
+                 paste0("FASTQ=", fastqFns))
+    if(isTRUE(paired))
+      cmd <- paste(cmd, paste0("SECOND_END_FASTQ=", fastq2Fns))
+    lapply(cmd, ezSystem)
+    return(invisible(fastqFns))
   }
-  cmd <- paste("java -Djava.io.tmpdir=. -jar", 
-               Sys.getenv("Picard_jar"), "SamToFastq",
-               paste0("I=", bamFns),
-               paste0("FASTQ=", fastqFns),
-               ifelse(isTRUE(paired), PASTE0("SECOND_END_FASTQ=", fastq2Fns),
-                      ""))
-  lapply(cmd, ezSystem)
-  invisible(fastqFns)
 }
 
-ezMethodBam2Fastq <- function(input=NA, output=NA, param=NA){
-  ## if output is not an EzDataset, set it!
-  if (!is(output, "EzDataset")){
-    output = input$copy()
-    output$setColumn("Read1", paste0(getwd(), "/", input$getNames(), 
-                                     "-R1.fastq"))
+ezMethodBam2Fastq <- function(input=NA, output=NA, param=NA,
+                              OUTPUT_PER_RG=TRUE){
+  require(Biostrings)
+  
+  if(isTRUE(OUTPUT_PER_RG)){
+    output = EzDataset(file=input$getFullPaths("CellDataset"),
+                       dataRoot=param$dataRoot)
+    output$setColumn("Read1", paste0(getwd(), "/", output$getNames(),
+                                     "_R1.fastq"))
     if (param$paired){
-      output$setColumn("Read2", paste0(getwd(), "/", input$getNames(), 
-                                       "-R2.fastq"))
+      output$setColumn("Read2", paste0(getwd(), "/", output$getNames(), 
+                                       "_R2.fastq"))
     } else {
-      if ("Read2" %in% input$colNames){
+      if ("Read2" %in% input$colNames)
         output$setColumn("Read2", NULL)
-      }
     }
     output$dataRoot = NULL
+    
+    bam2fastq(bamFn=input$getFullPaths("Read1"),
+              OUTPUT_PER_RG=TRUE, OUTPUT_DIR=getwd(),
+              paired=param$paired)
+  }else{
+    if (!is(output, "EzDataset")){
+      output = input$copy()
+      output$setColumn("Read1", paste0(getwd(), "/", input$getNames(), 
+                                       "-R1.fastq"))
+      if (param$paired){
+        output$setColumn("Read2", paste0(getwd(), "/", input$getNames(), 
+                                         "-R2.fastq"))
+      } else {
+        if ("Read2" %in% input$colNames){
+          output$setColumn("Read2", NULL)
+        }
+      }
+      output$dataRoot = NULL
+    }
+    bam2fastq(bamFn=input$getFullPaths("Read1"),
+              OUTPUT_PER_RG=FALSE,
+              fastqFns=output$getColumn("Read1"),
+              fastq2Fns=ifelse(isTRUE(param$paired), output$getColumn("Read2"),
+                               NULL),
+              paired=param$paired)
+    output$setColumn("Read Count",
+                     countReadsInFastq(output$getColumn("Read1")))
   }
-  
-  bam2fastq(bamFns=input$getFullPaths("Read1"),
-            fastqFns=output$getColumn("Read1"),
-            fastq2Fns=ifelse(isTRUE(param$paired), output$getFullPaths("Read2"),
-                             NULL),
-            paired=param$paired)
-  output$setColumn("Read Count", 
-                   sapply(output$getColumn("Read1"), fastq.geometry)[1, ])
   return(output)
+}
+
+
+countReadsInFastq = function(fastqFiles){
+  require(Biostrings)
+  nReads <- sapply(fastqFiles, fastq.geometry)[1, ]
+  return(nReads)
 }

@@ -6,7 +6,8 @@
 # www.fgcz.ch
 
 
-ezMethodEdger = function(input=NA, output=NA, param=NA, htmlFile="00index.html"){
+ezMethodEdger = function(input=NA, output=NA, param=NA,
+                         htmlFile="00index.html"){
   cwd <- getwd()
   setwdNew(basename(output$getColumn("Report")))
   on.exit(setwd(cwd))
@@ -19,7 +20,7 @@ ezMethodEdger = function(input=NA, output=NA, param=NA, htmlFile="00index.html")
     param$grouping2 = input$getColumn(param$grouping2)
   }
   
-  rawData = loadCountDatasetSE(input, param)
+  rawData = loadCountDataset(input, param)
   if (isError(rawData)){
     writeErrorReport(htmlFile, param=param, error=rawData$error)
     return("Error")
@@ -36,10 +37,8 @@ ezMethodEdger = function(input=NA, output=NA, param=NA, htmlFile="00index.html")
                           c("fgcz.css", "twoGroups.Rmd",
                             "fgcz_header.html", "banner.png"))
   file.copy(from=styleFiles, to=".", overwrite=TRUE)
-  rmarkdown::render(input="twoGroups.Rmd", envir = new.env(),
+  rmarkdown::render(input="twoGroups.Rmd", envir=new.env(),
                     output_dir=".", output_file=htmlFile, quiet=TRUE)
-  
-  #writeNgsTwoGroupReport(deResult, output, htmlFile)
   return("Success")
 }
 
@@ -58,6 +57,7 @@ EzAppEdger <-
                   appDefaults <<- rbind(testMethod=ezFrame(Type="character",  DefaultValue="glm",  Description="which test method in edgeR to use: glm or exactTest"),
                                         normMethod=ezFrame(Type="character", DefaultValue="TMM", Description="edgeR's norm method: TMM, upperquartile, RLE, or none"),
                                         useRefGroupAsBaseline=ezFrame(Type="logical", DefaultValue=FALSE, Description="should the log-ratios be centered at the reference samples"),
+                                        onlyCompGroupsHeatmap=ezFrame(Type="logical", DefaultValue=FALSE, Description="Only show the samples from comparison groups in heatmap"),
                                         priorCount=ezFrame(Type="numeric", DefaultValue=10, Description="prior count to be added to shrink the log-fold-changes"),
                                         deTest=ezFrame(Type="character", DefaultValue="QL", Description="edgeR's differential expression test method: QL or LR")
                                         )

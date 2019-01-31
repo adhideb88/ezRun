@@ -1,0 +1,503 @@
+---
+title:  "`r metadata(sce)$param$name`"
+author: "Functional Genomics Center Zurich"
+output: 
+  html_document:
+    self_contained: false
+    includes:
+      in_header: fgcz_header.html
+    css: fgcz.css
+editor_options: 
+  chunk_output_type: console
+---
+
+Started on `r format(Sys.time(), "%Y-%m-%d %H:%M:%S")`
+
+```{r setup, include=FALSE}
+require(SummarizedExperiment)
+require(plotly)
+require(scater)
+require(ezRun)
+require(DT)
+require(htmltools)
+require(dplyr)
+require(Matrix) # sparse matrix
+require(Seurat)
+require(pheatmap)
+require(readr)
+
+## ----------------------------------------------
+## debug
+# title:  "`r metadata(sce)$param$name`"
+# sce <- readRDS("/srv/gstore/projects/p2446/SCCountQC_32261_2018-12-12--21-58-56/GBM_SC_1_plate1_SCCountQC/sce.rds")
+ # sce <- readRDS("/scratch/gtan/debug/quickDebug/sce.rds")
+
+## convention:
+## by default the fixed genenames are use
+
+debug <- FALSE
+
+param <- metadata(sce)$param
+## ----------------------------------------------
+## picard metrics
+evalPicard = switch (param$scProtocol,
+  "smart-Seq2" = TRUE,
+  "10x"=FALSE,
+  NA
+)
+
+isMito <- toupper(as.character(seqnames(rowRanges(sce)))) %in% toupper(c("chrM", "MT"))
+
+## sceFixName for section "Reads on top 50 genes" and "Expression metrics"
+sceFixName = sce
+rownames(sceFixName) <- uniquifyFeatureNames(ID=rowData(sceFixName)$gene_id,
+                                             names=rowData(sceFixName)$gene_name)
+cts <- assays(sceFixName)$counts
+useCell = Matrix::colSums(cts) >= param$minReadsPerCell & 
+  Matrix::colSums(cts >= param$minReadsPerGene) > param$minGenesPerCell
+sceFilt = sceFixName[ , useCell]
+ctsFilt <- assays(sceFilt)$counts
+
+## scater sce
+cell_info <- data.frame(row.names=colnames(ctsFilt),
+                        lib_size=Matrix::colSums(ctsFilt)/1e6,
+                        expr_genes = Matrix::colSums(ctsFilt >= param$minReadsPerGene),
+                        perc_mito=Matrix::colSums(ctsFilt[isMito, , drop=FALSE])*100 / Matrix::colSums(ctsFilt))
+sceFixName <- calculateQCMetrics(sceFixName, feature_controls=list(Mt=isMito))
+
+## datasetAllCells for section "Heatmap of reads per cell on the plate"
+if(param$scProtocol == "smart-Seq2"){
+  datasetAllCells <- data.frame(colData(sce),
+                                check.names = FALSE, stringsAsFactors=FALSE)
+}
+```
+
+```{r , include=FALSE}
+# if(param$scProtocol == "smart-Seq2"){  ## TODO - why only for smart-Seq2???
+#   libsize.drop <- isOutlier(sceFilt$total_counts, nmads=5, type="lower",
+#                             log=TRUE)
+#   feature.drop <- isOutlier(sceFilt$total_features, nmads=5, type="lower",
+#                             log=TRUE)
+#   sceFixName <- sceFixName[,!(libsize.drop | feature.drop )]
+# }
+```
+
+```{r seurat setup, include=FALSE}
+## ----------------------------------------------
+## SeuratObject fro Seurat section
+cell_info_seurat <- cell_info
+cell_info_seurat$perc_mito <- cell_info_seurat$perc_mito/100
+scData <- CreateSeuratObject(raw.data = ctsFilt, min.cells = 5,
+                             project = param$name, meta.data=cell_info_seurat)
+```
+
+## CountQC_Result {.tabset}
+
+### Overview
+
+* Total Number of Cells: `r ncol(sce)`
+* Number of cells removed:  `r ncol(sce)-ncol(sceFilt)`
+    + cells with less than `r param$minReadsPerCell` reads aligned
+    + cells with less than `r param$minGenesPerCell` genes that have at least `r param$minReadsPerGene` reads
+* Median Genes per Cell = `r median(cell_info$expr_genes)`
+* Median Reads per Cell = `r round(median(cell_info$lib_size*1e6),0)`
+* Number of input reads = `r ifelse(is.null(metadata(sce)$mlog), NA, metadata(sce)$mlog["Number of input reads",2])`
+* % of reads mapped to multiple loci = `r ifelse(is.null(metadata(sce)$mlog), NA, metadata(sce)$mlog["% of reads mapped to multiple loci",2])`
+  
+
+### #Genes detected in cells
+
+Interactive plot showing the read counts vs the number of expressed genes for all cells. Each dot is a cell.
+
+```{r genes detected in cells, fig.width=8, fig.height=5, echo=FALSE, message=FALSE, warning=FALSE, eval=!debug}
+xax <- list(
+  title = "Read counts (million)",
+  zeroline = FALSE
+)
+yax <- list(
+  title = "Number of expressed genes",
+  zeroline = FALSE
+)
+plot_ly(data=cell_info, x=~lib_size, y=~expr_genes, 
+        text=rownames(cell_info),
+        marker = list(color="deepskyblue3"), type='scatter') %>% 
+  layout(xaxis = xax, yaxis = yax)
+```
+
+### QC metrics on the cells
+
+Histograms of read counts, number of expressed genes and proportion of reads assigned to mitochondrial genes for all cells
+
+```{r QC metrics on the cells, fig.width=10, fig.height=5, echo=FALSE, message=FALSE, warning=FALSE, eval=!debug}
+yax <- list(
+  title = "Number of cells"
+)
+p1 <- plot_ly(data=cell_info, x=~lib_size) %>%
+  layout(xaxis = list(title="Read counts (million)"), yaxis = yax)
+p2 <- plot_ly(data=cell_info, x=~expr_genes) %>%
+  layout(xaxis = list(title="Number of expressed genes"), yaxis = yax)
+p3 <- plot_ly(data=cell_info, x=~perc_mito) %>%
+  layout(xaxis = list(title="Mitochondrial proportion (%)"), yaxis = yax)
+subplot(p1, p2, p3, titleX=TRUE, titleY=TRUE, nrows=1) %>%
+  layout(showlegend = FALSE)
+```
+
+### Reads on top 50 genes
+
+Percentage of total counts assigned to the top 50 most highly-abundant genes. For each gene, each bar represents the percentage assigned to that gene for a single cell, while the circle represents the average across all cells.
+
+```{r top 50 genes, fig.width=6, fig.height=6, echo=FALSE, message=FALSE, warning=FALSE, eval=!debug}
+plotHighestExprs(sceFixName, n=50)
+```
+
+### Expression metrics
+
+Number of cells with expression for a gene against mean expression level.
+
+```{r expression metrics, fig.width=8, fig.height=6, echo=FALSE, message=FALSE, warning=FALSE, eval=!debug}
+plotExprsFreqVsMean(sceFixName)
+```
+
+### Heatmap of reads per cell on the plate
+
+Sequenced reads on the plate layout.The heatmap values are in $log10$ scale.
+The colorScale ranges from half of median value to twice of median value.
+
+This is only available for plate based single cell protocol.
+
+```{r plate layout, echo=FALSE, message=FALSE, warning=FALSE, eval=param$scProtocol=="smart-Seq2" && !debug}
+plateMatrix <- plateStatistics(datasetAllCells)
+
+if(!is.na(plateMatrix)){
+  plateMatrix$`user ready made`$`LibConc_100_800bp [Characteristic]`=NULL
+  l <- htmltools::tagList()
+  ## This is the way of plotting plotly figures within a loop in knitr code chunk
+  for(plateName in names(plateMatrix)){
+    for(colname in names(plateMatrix[[plateName]])){
+      p <- heatmapPlate(plateMatrix[[plateName]][[colname]],
+                        title=paste(plateName, colname, sep=": "),
+                        center=TRUE, log10=TRUE,
+                        width = 500*(1 + sqrt(5))/2, height = 500)
+      ## tagList ignores chunk optiosn for figrue size.
+      ## control the size in plotly.
+      l[[paste(plateName, colname, sep=": ")]] <- as_widget(p)
+    }
+  }
+  l
+}
+```
+
+
+### Gene Detection Rates
+
+```{r gene detection rates gc vs width, fig.width=7, fig.height=7, echo=FALSE, message=FALSE, eval=!debug}
+scePC = sce
+scePC = scePC[rowData(scePC)$biotypes == "protein_coding", ]
+widthOffset = 200
+logWidthBreaks = c(9.5, 10.5, 11.5)
+gcBreaks = c(0.42, 0.48, 0.53, 0.57, 0.62)
+refWidthBin = "(9.5 - 10.5]" 
+refGcBin = "(0.53 - 0.57]"
+  ## define the gene strata
+logWidth = log2(rowData(scePC)$featWidth + widthOffset)
+lwClasses = ezCut(logWidth, breaks = logWidthBreaks)
+gcClasses = ezCut(rowData(scePC)$gc, gcBreaks)
+geneBins = tapply((1:nrow(scePC)), list(logWidth=lwClasses, gc=gcClasses), identity)
+
+fracPresentByGene = Matrix::rowMeans(assays(scePC)$counts > param$minReadsPerGene)
+fracPresentBinned = ezMatrix(0, rows=rownames(geneBins), cols=colnames(geneBins))
+for (i in 1:length(geneBins)){
+  fracPresentBinned[i] = mean(fracPresentByGene[geneBins[[i]]])
+}
+
+ezHeatmap(fracPresentBinned[nrow(fracPresentBinned):1, ], lim=c(0, 0.2),
+          Rowv = FALSE, Colv = FALSE, main="", colors=gray((1:256)/256),
+          cexRow=1, cexCol=1, key.xlab="detection rate", key.title="",
+          xlab="GC", ylab="log2 gene length", margins=c(8,8))
+
+ezHeatmap(log2((fracPresentBinned[nrow(fracPresentBinned):1, ] + 1e-3) / 
+                 fracPresentBinned[refWidthBin, refGcBin]), lim=c(-2, 2),
+          Rowv = FALSE, Colv = FALSE, main="",
+          colors=getBlueRedScale(),
+          cexRow=1, cexCol=1, key.xlab="detection rate", key.title="",
+          xlab="GC", ylab="log2 gene length", margins=c(8,8))
+```
+
+```{r gene detection rates cells vs gcwidth, fig.width=14, fig.height=7, echo=FALSE, message=FALSE, eval=!debug}
+
+binCombs = expand.grid(logWidth=rownames(geneBins), gc=colnames(geneBins))
+gcWidthScores = ezMatrix(NA, rows=paste(binCombs$logWidth, binCombs$gc), 
+                         cols=colnames(scePC))
+for (i in 1:nrow(binCombs)){
+  idx = geneBins[[binCombs$logWidth[i], binCombs$gc[i]]]
+  gcWidthScores[paste(binCombs$logWidth[i], binCombs$gc[i]), ] = Matrix::colMeans(assays(scePC)$counts[idx, , drop=FALSE] > param$minReadsPerGene)
+}
+gcWidthScoresRel = log2((gcWidthScores + 0.01) / Matrix::rowMeans(gcWidthScores+ 0.01))
+
+gcWidthScoresRanged <- shrinkToRange(gcWidthScores, c(0, 0.2))
+pheatmap(gcWidthScoresRanged[ ,order(Matrix::colSums(assays(scePC)$counts) > 3)],
+         scale="none",
+         legend_breaks = c(0, 0.05, 0.1, 0.15, 0.2),
+         legend_labels = c("0", "0.05", "0.1", "0.15", "detection bias\n0.2"),
+         color = colorRampPalette(c("black", "white"))(100),
+         breaks=seq(from=0, to=0.2, length.out=101),
+         cluster_rows=FALSE, cluster_cols=FALSE,
+         show_rownames=TRUE, show_colnames = FALSE,
+         main="Detection bias of cells over width and gc"
+         )
+
+gcWidthScoresRelRanged <- shrinkToRange(gcWidthScoresRel, c(-2, 2))
+pheatmap(gcWidthScoresRelRanged[ ,order(Matrix::colSums(assays(scePC)$counts > 3))],
+         scale="none",
+         legend_breaks = c(-2, -1, 0, 1, 2),
+         legend_labels = c("-2", "-1", "0", "1", "detection bias\n2"),
+         color = colorRampPalette(c("blue", "white", "red"))(100),
+         breaks=seq(from=-2, to=2, length.out=101),
+         cluster_rows=TRUE, cluster_cols=FALSE,
+         show_rownames=TRUE, show_colnames = FALSE,
+         main="Relative detection bias of cells over width and gc"
+         )
+```
+
+### Picard Metrics
+A overview of scRNA-Seq QC metrics from Picard over the plate. 
+For the detais of the metrics, please refer to 
+https://broadinstitute.github.io/picard/picard-metric-definitions.html
+
+This is only available for plate based single cell protocol.
+
+```{r picard setup, echo=FALSE, eval=evalPicard && !debug && !param$hasControlSeqs}
+cd <- data.frame(colData(sce), check.names = FALSE)
+cd$nGenesDetected <- Matrix::colSums(assays(sce)$counts > 3)
+```
+
+```{r picard plot, echo=FALSE, fig.width=20, fig.height=6, eval=evalPicard && !debug && !param$hasControlSeqs}
+plateMatrix <- plateStatistics(cd,
+                               colname=c("PF_READS", "nGenesDetected",
+                                         "PCT_RIBOSOMAL_BASES", "PF_READS_ALIGNED",
+                                         "PF_MISMATCH_RATE", "PCT_ADAPTER",
+                                         "PCT_MRNA_BASES", "MEDIAN_CV_COVERAGE",
+                                         "MEDIAN_5PRIME_BIAS", "MEDIAN_3PRIME_BIAS",
+                                         "PERCENT_DUPLICATION"))
+metricsNonLog <- c("PF_MISMATCH_RATE", "PCT_ADAPTER", "MEDIAN_5PRIME_BIAS",
+                   "MEDIAN_3PRIME_BIAS", "PERCENT_DUPLICATION")
+plateName <- names(plateMatrix)[1]
+l <- htmltools::tagList()
+for(plateName in names(plateMatrix)){
+  for(colname in setdiff(names(plateMatrix[[plateName]]), 
+                         c("PF_READS", "nGenesDetected"))){
+    matrix2PlotOrigin <- matrix2Plot <- plateMatrix[[plateName]][[colname]]
+    if(colname %in% metricsNonLog){
+      ## non-log scale
+      med_matrix2Plot <- median(matrix2Plot, na.rm=TRUE)
+      range_colour <- sort(c(0, 2*med_matrix2Plot)) ## in case for negative values
+      p1 <- heatmapPlate(matrix2PlotOrigin, log10 = FALSE, center = TRUE,
+                         title=paste(plateName, colname, sep=": "),
+                         colors="RdYlGn")
+    }else{
+      ## log-scale
+      stopifnot(all(matrix2Plot >= 0, na.rm = TRUE)) ## It has to be positive to log
+      matrix2Plot[matrix2Plot==0] <- min(0.25 * matrix2Plot[matrix2Plot >0],
+                                         na.rm = TRUE)
+      matrix2Plot <- log10(matrix2Plot)
+      med_matrix2Plot <- median(matrix2Plot, na.rm=TRUE)
+      range_colour <- c(med_matrix2Plot-log10(2), med_matrix2Plot+log10(2))
+      p1 <- heatmapPlate(matrix2PlotOrigin, log10=TRUE, center = TRUE,
+                       title=paste(plateName, colname, sep=": "), 
+                       colors="RdYlGn")
+    }
+    
+    ## To make the scatter plot have the same colourscale as heatmap
+    ## There are two options:
+    ## 1. fake the data into cd2 with minimal and maximal colourrange.
+    ##    Certainly it's not elegent.
+    # cd2 <- data.frame(PF_READS=c(-1, -1, c(plateMatrix[[plateName]]$PF_READS)),
+    #                   nGenesDetected=c(-1,-1, c(plateMatrix[[plateName]]$nGenesDetected)),
+    #                   metric=c(range_colour, c(matrix2Plot)),
+    #                   metricOriginal=c(range_colour, c(plateMatrix[[plateName]][[colname]]))
+    #                   )
+    ## color by metric, plot value by metricOriginal
+    ## 2. use the cmin and cmax in scatter plot. The colour of points is right,
+    ##   but the color bar is wrong.
+    ##   Anyway we only use the color bar from heatmap.
+    ## I use option 2.
+    cd2 <- data.frame(PF_READS=c(plateMatrix[[plateName]]$PF_READS),
+                      nGenesDetected=c(plateMatrix[[plateName]]$nGenesDetected),
+                      matrix2Plot=c(matrix2Plot),
+                      matrix2PlotOrigin=c(matrix2PlotOrigin),
+                      position=apply(expand.grid(rownames(matrix2PlotOrigin),
+                                                 colnames(matrix2PlotOrigin)), 
+                                     1, paste, collapse=": ")
+                      )
+    if(colname == "PF_READS_ALIGNED"){
+      cd2 <- transform(cd2, matrix2PlotOrigin=matrix2PlotOrigin/PF_READS)
+    }
+    p2 <- plot_ly(data = cd2, x = ~PF_READS, y = ~nGenesDetected,
+                    color = ~matrix2Plot, text=~position,
+                    type="scatter", mode = 'markers', colors="RdYlGn",
+                    marker=list(cmin=range_colour[1], cmax=range_colour[2])) %>%
+            hide_colorbar() 
+    p3 <- plot_ly(data = cd2, x = ~PF_READS, y = ~matrix2PlotOrigin,
+                  color = ~matrix2Plot, text=~position,
+                  type="scatter", mode = 'markers', colors="RdYlGn",
+                  marker=list(cmin=range_colour[1], cmax=range_colour[2])) %>%
+            hide_colorbar()
+    p2 <- p2 %>%
+              layout(xaxis=list(type="log"),
+                     yaxis=list(type="log", title="# of Genes Detected"))
+    if(colname %in% metricsNonLog){
+      p3 <- p3 %>%
+              layout(xaxis=list(type="log"), yaxis=list(title=colname))
+    }else{
+      p3 <- p3 %>%
+            layout(xaxis=list(type="log"),
+                   yaxis=list(type="log", title=colname))
+    }
+    l[[paste(plateName, colname, sep=": ")]] <- 
+      as_widget(subplot(p1, p2, p3, nrows=1, titleX=TRUE, titleY=TRUE) %>%
+                    layout(showlegend = FALSE))
+  }
+}
+l
+```
+
+### Picard Metrics Summary
+
+This is only available for plate based single cell protocol.
+
+```{r metrics, echo=FALSE, eval=evalPicard && !debug && !param$hasControlSeqs}
+metricsDT <- colData(sce)[, (tail(grep("\\[File\\]", colnames(colData(sce))), 1)+1):ncol(colData(sce))]
+datatable(data.frame(metricsDT, check.names = FALSE), filter = 'top',
+          caption="scRNASeq QC Metrics")
+```
+
+```{r 5 prime bias, echo=FALSE, eval=FALSE}
+x <- list(
+  title = "Prime bias"
+)
+
+p <- plot_ly(alpha = 0.6) %>%
+  add_histogram(x = ~colData(sce)$`bias5`, name="5 prime bias") %>%
+  add_histogram(x = ~colData(sce)$`bias3`, name="3 prime bias") %>%
+  layout(barmode = "overlay", title="Mean prime bias",
+         xaxis=x)
+
+p
+
+p2 <- plot_ly(alpha = 0.6) %>%
+  add_histogram(x = ~colData(sce)$`MEDIAN_5PRIME_BIAS`, name="5 prime bias") %>%
+  add_histogram(x = ~colData(sce)$`MEDIAN_3PRIME_BIAS`, name="3 prime bias") %>%
+  layout(barmode = "overlay", title="Median prime bias: Picard",
+         xaxis=x)
+p2
+```
+
+### Seurat
+
+```{r VlnPlot, echo=FALSE, fig.width=10, fig.height=ifelse(nchar(scData@project.name) > 20, 10, 7), eval=!debug}
+VlnPlot(object=scData, features.plot = c("nGene", "nUMI", "perc_mito"),
+        nCol=3, 
+        x.lab.rot=ifelse(nchar(scData@project.name) > 20, TRUE, FALSE))
+```
+
+```{r seurat filter and normalize, echo=FALSE, eval=!debug}
+scData <- FilterCells(object = scData,
+                      subset.names = c("nGene", "perc_mito"),
+                      low.thresholds = c(param$minGenesPerCell, -Inf), 
+                      high.thresholds = c(Inf, 0.25))
+scData <- NormalizeData(object=scData, normalization.method="LogNormalize",
+                        scale.factor=getSeuratScalingFactor(param$scProtocol))
+
+if(ncol(scData@data) <= 10){
+  ## if there is less than 10 cells left, don't do following seurat because of error
+  doSeurat <- FALSE
+  message("Less than 10 cells after Seurat filtering. The donwstream Seurat analysis is aborted.")
+}else{
+  doSeurat <- TRUE
+}
+```
+
+```{r seurat variable gene, echo=FALSE, eval=doSeurat && !debug}
+scData <- FindVariableGenes(object=scData)
+```
+
+The number of variable genes: `r length(x = scData@var.genes)`.
+
+```{r scale and PCA calculation, echo=FALSE, message=FALSE, results='hide', eval=doSeurat && !debug}
+scData <- ScaleData(object = scData, vars.to.regress = c("nUMI","perc_mito"),
+                    do.par=TRUE, num.cores=param$cores)
+scData <- RunPCA(object = scData, pc.genes = scData@var.genes,
+                 do.print = TRUE, pcs.print = 1:5,
+                 genes.print = 5)
+scData <- ProjectPCA(object = scData, do.print=FALSE)
+```
+
+```{r plot viz PCA, echo=FALSE, fig.width=10, fig.height=15, eval=doSeurat && !debug}
+VizPCA(object = scData, pcs.use = 1:6)
+```
+
+```{r plot PCA, echo=FALSE, fig.width=7, fig.height=7, eval=doSeurat && !debug}
+PCAPlot(object = scData, dim.1 = 1, dim.2 = 2)
+```
+
+```{r PCHeatmap, echo=FALSE, fig.width=10, fig.height=30, eval=doSeurat && !debug}
+PCHeatmap(object=scData, pc.use=1:20,
+          cells.use=min(c(500, ncol(scData@data))),
+          do.balanced=TRUE, label.columns=FALSE, use.full=FALSE)
+```
+
+```{r JackStraw, echo=FALSE, fig.width=10, fig.height=25, eval=doSeurat&& !debug}
+scData <- JackStraw(object=scData, num.replicate=100, display.progress=FALSE,
+                    do.par=TRUE, num.cores=param$cores)
+suppressWarnings(JackStrawPlot(object=scData, PCs = 1:20))
+```
+
+```{r PCElbowPlot, echo=FALSE, eval=doSeurat && !debug}
+PCElbowPlot(object=scData)
+```
+
+### Data availability
+
+**Expression matrix**
+
+The raw count matrix and tpm are available here:
+
+```{r raw count matrix, echo=FALSE, results='asis', message=FALSE, eval=!debug}
+# Raw counts
+rawCount <- as.matrix(assays(sce)$counts)
+rawCount <- as_tibble(rawCount, rownames=paste0(param$featureLevel, "_id"))
+rawCount <- bind_cols(gene_name=rowData(sce)$gene_name, rawCount)
+write_tsv(rawCount, path="rawCount.txt")
+zip("rawCount.zip", files="rawCount.txt")
+cat("\n")
+cat(paste0("[", "rawCount.zip", "](", "rawCount.zip", ")"))
+cat("\n")
+invisible(file.remove(c("rawCount.txt")))
+
+# TPM
+tpm <- as.matrix(getTpm(sce))
+tpm <- as_tibble(tpm, rownames=paste0(param$featureLevel, "_id"))
+tpm <- bind_cols(gene_name=rowData(sce)$gene_name, tpm)
+write_tsv(tpm, path="tpm.txt")
+zip("tpm.zip", files="tpm.txt")
+cat("\n")
+cat(paste0("[", "tpm.zip", "](", "tpm.zip", ")"))
+cat("\n")
+invisible(file.remove(c("tpm.txt")))
+
+# CPM
+cpm <- as.matrix(getCpm(sce))
+cpm <- as_tibble(cpm, rownames=paste0(param$featureLevel, "_id"))
+cpm <- bind_cols(gene_name=rowData(sce)$gene_name, cpm)
+write_tsv(cpm, path="cpm.txt")
+zip("cpm.zip", files="cpm.txt")
+cat("\n")
+cat(paste0("[", "cpm.zip", "](", "cpm.zip", ")"))
+cat("\n")
+invisible(file.remove(c("cpm.txt")))
+```
+
+### SessionInfo
+```{r, echo=FALSE}
+sessionInfo()
+```

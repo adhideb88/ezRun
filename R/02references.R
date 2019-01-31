@@ -47,7 +47,7 @@ setMethod("initialize", "EzRef", function(.Object, param=list()){
   #   if (!ezIsSpecified(param$refBuild)){
   #     return(.Object)
   #   }
-  genomesRoot = strsplit(GENOMES_ROOT, ":")[[1]][1]
+  genomesRoot = strsplit(GENOMES_ROOT, ":")[[1]]
   .Object@refBuild = param$refBuild
   refFields = strsplit(.Object@refBuild, "/", fixed=TRUE)[[1]]
   if (ezIsSpecified(param$refBuildName)){
@@ -153,13 +153,13 @@ setMethod("buildRefDir", "EzRef", function(.Object, genomeFile, genesFile,
                    "; rm -f Genes; ", "ln -s",
                    file.path(.Object@refAnnotationVersion, "Genes"), "Genes"))
   }
-  
+
   ## fasta
   genome <- readBStringSet(genomeFile) #BString for lower cased softmasked repeats
   ### remove everything after chr id
   names(genome) = sub(" .*", "", names(genome))
   writeXStringSet(genome, .Object@refFastaFile)
-  
+
   ## 2 GTF files: 
   ### features.gtf
   gtf <- import(genesFile)
@@ -198,7 +198,7 @@ setMethod("buildRefDir", "EzRef", function(.Object, genomeFile, genesFile,
     file.remove(dictFile)
   }
   cmd = paste("java -Djava.io.tmpdir=. ", " -jar", 
-              "$Picard_jar", "CreateSequenceDictionary",
+              Sys.getenv("Picard_jar"), "CreateSequenceDictionary",
               paste0("R=", .Object@refFastaFile), paste0("O=", dictFile))
   ezSystem(cmd)
 })
@@ -327,3 +327,16 @@ setMethod("buildIgvGenome", "EzRef", function(.Object){
   setwd(cd)
   unlink(filesToZip)
 })
+
+getControlSeqs <- function(ids=NULL){
+  genomesRoot <- strsplit(GENOMES_ROOT, ":")[[1]]
+  controlSeqsFn <- file.path(genomesRoot, "controlSeqs.fa")
+  controlSeqsFn <- head(controlSeqsFn[file.exists(controlSeqsFn)], 1)
+  controlSeqs <- readDNAStringSet(controlSeqsFn)
+  names(controlSeqs) <- sub(" .*$", "", names(controlSeqs))
+  if(!is.null(ids)){
+    controlSeqs <- controlSeqs[ids]
+  }
+  return(controlSeqs)
+}
+

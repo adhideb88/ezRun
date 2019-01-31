@@ -469,7 +469,7 @@ getTranscriptSequences = function(param=NULL, genomeFn=NULL, featureFn=NULL){
     featureFn <- param$ezRef["refFeatureFile"]
   }
   txdb = makeTxDbFromGFF(featureFn,
-                         dataSource="FGCZ", taxonomyId = "10090")
+                         dataSource="FGCZ", taxonomyId = NA)
   # organism=organism, chrominfo=NULL)
   exonRgList = exonsBy(txdb, by="tx", use.names=TRUE)
   genomeFasta = FaFile(genomeFn)
@@ -564,6 +564,7 @@ getTranscriptGcAndWidth = function(param=NULL, genomeFn=NULL, featureFn=NULL){
   require(GenomicRanges)
   require(stringr)
   require(Rsamtools)
+  require(rtracklayer)
   
   if(!is.null(param)){
     genomeFn <- param$ezRef["refFastaFile"]
@@ -573,29 +574,19 @@ getTranscriptGcAndWidth = function(param=NULL, genomeFn=NULL, featureFn=NULL){
   if (!file.exists(genomeFasta)){
     return(NULL)
   }
-  #genomeSeq = readDNAStringSet(genomeFasta)
-  #names(genomeSeq) = sub(" .*", "", names(genomeSeq))
-  gff <- fread(featureFn, header=FALSE, sep="\t")
-  gff <- gff[V3=="exon", .(chr=V1, start=V4, end=V5, strand=V7, attribute=V9)]
-  exonsByTx <- GRanges(seqnames=gff$chr,
-                       ranges=IRanges(start=gff$start,
-                                      end=gff$end),
-                       strand=gff$strand)
-  transcripts <- ezGffAttributeField(gff$attribute,
-                                     field="transcript_id", 
-                                     attrsep="; *", valuesep=" ")
-  #exonsByTx <- genomeSeq[exonsByTx] ## This can results in error of XString
-  #                                     object of length 2^31 or more
-  exonsByTx <- getSeq(FaFile(genomeFasta), exonsByTx) 
+  gff <- import(featureFn)
+  exons <- gff[gff$type == "exon"]
+  transcripts <- exons$transcript_id
+  exons <- getSeq(FaFile(genomeFasta), exons)
   # FaFile can deal with spaces witin header name.
   # ">chr1 test1" can be subset by chr1 GRanges.
-  gcCount <- letterFrequency(exonsByTx, letters="GC", as.prob = FALSE)[ ,"G|C"]
-  txWidth <- width(exonsByTx)
+  gcCount <- letterFrequency(exons, letters="GC", as.prob = FALSE)[ ,"G|C"]
+  txWidth <- width(exons)
   data <- data.table(tx=transcripts, txWidth=txWidth, gcCount=gcCount)
   data <- data[ , lapply(.SD, sum), by=.(tx)]
   ans <- list(gc=signif(setNames(data[ , gcCount/txWidth], data[ ,tx]),
                         digits=4),
-              width=setNames(data[ , txWidth], data[ ,tx]))
+              featWidth=setNames(data[ , txWidth], data[ ,tx]))
   return(ans)
 }
 
@@ -642,3 +633,85 @@ getEnsemblTypes = function(gff){
   hasExon = tapply(isMatch, cdsParent, any)
   table(hasExon, useNA="always")
 }
+
+
+trimTxGtf <- function(param=NULL, inGTF, outGTF, fastaFile, refAnnotationFile,
+                      transcriptTypes,
+                      width=100L, fix=c("start", "end"),
+                      minTxLength=NULL, useTxIDs=NULL, maxTxs=NULL){
+  stopifnot(length(outGTF) == length(fix))
+  
+  if(!is.null(param)){
+    inGTF <- param$ezRef@refFeatureFile
+    fastaFile <- param$ezRef@refFastaFile
+    refAnnotationFile <- param$ezRef@refAnnotationFile
+    transcriptTypes <- param$transcriptTypes
+  }
+  require(rtracklayer)
+  require(GenomicRanges)
+  
+  gtf <- import(inGTF)
+  seqlengthsRef <- fasta.seqlengths(fastaFile)
+  names(seqlengthsRef) <- sub('[[:blank:]].*$','',names(seqlengthsRef))
+  seqlengths(gtf) <- seqlengthsRef[names(seqlengths(gtf))]
+  gtf <- gtf[gtf$type == "exon"]
+  ## This explicit usage of S4Vectors:: isnecessary. Otherwise, it use base::split.
+  exonsByTx <- S4Vectors::split(gtf, gtf$transcript_id)
+  
+  if(!is.null(minTxLength)){
+    exonsByTx <- exonsByTx[sum(width(exonsByTx)) >= minTxLength]
+  }
+  
+  if(ezIsSpecified(transcriptTypes)){
+    seqAnno <- ezFeatureAnnotation(refAnnotationFile,
+                                  dataFeatureType="isoform")
+    txUse <- rownames(seqAnno)[seqAnno$type %in% transcriptTypes]
+    exonsByTx <- exonsByTx[names(exonsByTx) %in% txUse]
+  }
+  
+  if(!is.null(useTxIDs)){
+    exonsByTx <- exonsByTx[intersect(useTxIDs, names(exonsByTx))]
+  }
+  if(!is.null(maxTxs)){
+    exonsByTx <- sample(exonsByTx, size=min(length(exonsByTx), maxTxs))
+  }
+  
+  for(i in 1:length(fix)){
+    exonsByTxTrimmed <- endoapply(exonsByTx, trimGRanges, width=width,
+                           start=ifelse(fix[i]=="start", TRUE, FALSE))
+    gtf <- unlist(exonsByTxTrimmed)
+    export(gtf, outGTF[i])
+  }
+  
+  invisible(setNames(outGTF, fix))
+}
+
+trimGRanges <- function(x, width=100, start=TRUE){
+  require(GenomicRanges)
+  stopifnot(length(unique(strand(x))) == 1L)
+  decreasing <- xor(unique(strand(x)) == "+", start)
+  # "+", TRUE -> FALSE
+  # "-", FALSE -> FALSE
+  # "-", TRUE -> TRUE
+  # "+", FALSE -> TRUE
+  x <- sort(x, decreasing = decreasing)
+  cs <- cumsum(width(x))
+  trimThis <- which(cs >= width)[1]
+  if(is.na(trimThis)){
+    xTrim <- x
+  }else{
+    if(trimThis > 1){
+      xTrim <- x[1:(trimThis-1)]
+      width <- width - cs[trimThis-1L]
+      xTrim <- c(xTrim, resize(x[trimThis], 
+                               fix=ifelse(start, "start", "end"),
+                               width=width))
+    }else{
+      xTrim <- resize(x[trimThis],
+                      fix=ifelse(start, "start", "end"),
+                      width=width)
+    }
+  }
+  return(sort(xTrim)) ## Let's return always coordinate sorted GRanges.
+}
+

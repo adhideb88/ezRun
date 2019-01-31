@@ -1,0 +1,147 @@
+---
+title: "`r paste('Analysis of 16S data: phyloseq report')`"
+author: "Functional Genomics Center Zurich"
+output: 
+  html_document:
+    self_contained: false
+    includes:
+      in_header: fgcz_header.html
+    css: fgcz.css
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,warning=FALSE, message=FALSE, out.width = "49%")
+## This report requires summary files form mothur
+debug <- FALSE
+setEnvironments("phantomjs")
+```
+
+```{r prepAbund, include=FALSE}
+### create plots: 1. abundance
+abundPlot <- plot_bar(physeqFullObject, fill="Genus") + geom_bar(aes(fill=Genus), stat="identity", position="stack")
+if (isGroupThere) {
+  abundPlotGroup <- plot_bar(physeqFullObject, "Species", fill="Genus", facet_grid=~Group) + geom_bar(aes(fill=Genus), stat="identity", position="stack")  +theme(axis.text.x = element_blank())
+}
+```
+
+```{r prepOrdTaxa, include=FALSE, eval=isGroupThere}
+### create plots: 2. ordination by taxa 
+ordinateDS <- ordinate(physeqFullObject, "NMDS", "bray")
+plotOrdTaxa = plot_ordination(physeqFullObject, ordinateDS, type="taxa", color="Phylum") + facet_wrap(~Phylum, 3) + ggtitle("Taxa ordination") + theme(legend.position = "none") 
+```
+
+```{r prepOrdSamples, include=FALSE, eval=isGroupThere}
+### create plots: 2. ordination by samlpe
+inputData <- physeqFullObject@otu_table@.Data
+inputGroup <- physeqFullObject@sam_data$Group
+plotOrdSamples =  pcaForPhylotseqPlot(inputData,inputGroup) + ggtitle("Sample ordination")
+```
+
+```{r prepRich, include=FALSE}
+### create plots: 3. richness 
+if (isGroupThere) {
+plotRichness <- plot_richness(physeqFullObject, x="Group", measures=c("Simpson", "Shannon"), color="Group")
+}else{
+plotRichness <- plot_richness(physeqFullObject, measures=c("Simpson", "Shannon"))
+}
+```
+
+```{r prepTree, include=FALSE}
+### create plots: 4. tree
+if (isGroupThere) {
+plotTree <- plot_tree(physeqFullObject , ladderize="left", color="Group")
+}else{
+plotTree <- plot_tree(physeqFullObject , ladderize="left")
+}
+```
+
+```{r prepRaref, include=FALSE}
+### create plots: 4. tree
+  taxDF <- data.frame(physeqObjectNoTree@tax_table@.Data, stringsAsFactors = F)
+  otuDF <- data.frame(physeqObjectNoTree@otu_table@.Data, stringsAsFactors = F)
+  specList <- list()
+  rarefPlot <- list()
+  for (taxon in colnames(taxDF)){
+    genusOTUs <- rownames(taxDF)[grep("unclass",taxDF[[taxon]], invert = T)]
+    if (length(genusOTUs) >0){
+      specDF <- otuDF[,genusOTUs]
+      specDF$Group <- as.factor(rownames(specDF))
+      specDF$Taxon <- as.factor(taxon)
+      rarefPlot[[taxon]] <- otuSaturationPlot(specDF,"table")
+    }
+  }
+```
+
+```{r prepHeat, include=FALSE, eval=isGroupThere}
+### create plots:5. pheatmap
+show_pHeatmap <- heatmapForPhylotseqPlotPheatmap(inputData,designMatrix)
+```
+
+
+```{r prepDeSeq, include=FALSE, eval=isGroupThere}
+### 6: compare groups
+deseqResults <- phyloSeqToDeseq2_tableAndPlots(physeqFullObject)
+```
+
+Started on `r format(Sys.time(), "%Y-%m-%d %H:%M:%S")`
+
+## Phyloseq report {.tabset}
+### Abundance barplots
+#### If samples are grouped, the second plot  is more informative
+```{r abund, echo=FALSE}
+par(mfrow=c(1,2), las=1)
+plot(abundPlot)
+if (isGroupThere) {
+plot(abundPlotGroup)
+}
+```
+
+### Clustering (ordination) plots
+```{r ordinTaxa, echo=FALSE,eval=isGroupThere}
+par(mfrow=c(1,2), las=1)
+plot(plotOrdTaxa)
+plot(plotOrdSamples)
+```
+
+### Richness plots
+```{r rich, echo=FALSE,out.width="60%"}
+plot(plotRichness)
+```
+
+```{r tree, echo=FALSE, eval=FALSE}
+plot(plotTree)
+```
+
+### Rarefaction plots
+```{r raref, echo=FALSE}
+par(mfrow=c(1,2), las=1)
+for (RarPlot in rarefPlot){
+plot(RarPlot)
+}
+```
+
+### Heatmaps
+```{r heat, echo=FALSE,eval=isGroupThere,out.width="100%"}
+show_pHeatmap()
+```
+
+### Two-goups comparison
+```{r volcano, echo=FALSE,eval=isGroupThere, out.width="33%"}
+par(mfrow=c(1,3), las=1)
+plot(deseqResults$vPlot)
+plot(deseqResults$logPlot)
+plot(deseqResults$pieChart)
+```
+
+#### Summary table (top 20 differentially expressed organisms)
+```{r deSeqTable, echo=FALSE,eval=isGroupThere}
+kable(deseqResults$table, escape=TRUE, row.names=FALSE, format="html") %>%
+  kable_styling(bootstrap_options = c("striped", "bordered"),
+                full_width = T) %>%
+  scroll_box(width = "100%", height = "600px")
+```
+
+### SessionInfo
+```{r, echo=FALSE}
+sessionInfo()
+```

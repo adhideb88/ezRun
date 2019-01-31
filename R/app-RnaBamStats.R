@@ -39,7 +39,8 @@ EzAppRnaBamStats <-
                                         dupRadar=ezFrame(Type="logical",	DefaultValue="TRUE",	Description="run dupradar"),
                                     fragSizeMax=ezFrame(Type="integer",  DefaultValue=500,	Description="maximum fragment size to plot in fragment size distribution"),
                                     writeIgvSessionLink=ezFrame(Type="logical", DefaultValue="TRUE", Description="should an IGV link be generated"),
-                                    ignoreDup=ezFrame(Type="logical", DefaultValue="NA", Description="should marked duplicates be ignored?"))
+                                    ignoreDup=ezFrame(Type="logical", DefaultValue="NA", Description="should marked duplicates be ignored?"),
+                                    skipCountQc=ezFrame(Type="logical", DefaultValue=FALSE, Description="should we skip the count QC as part of the report"))
                 }
               )
   )
@@ -197,7 +198,6 @@ ezPosSpecErrorRate = function(bam, ReferenceGenome, nMaxReads=100000){
   require("Hmisc", warn.conflicts=WARN_CONFLICTS, quietly=!WARN_CONFLICTS)
   ## remove the reads containing the gaps, insertions, deletions
   hasGap = grepl("N|I|D", bam$cigar)
-  #readLength = nchar(as.character(bam$seq))
   readLength <- width(bam$seq)
   isOutOfRange = bam$pos + readLength - 1 > length(ReferenceGenome) | bam$pos < readLength ## this is very conservative; needed because there might be clipped bases in the beginning
   if (any(isOutOfRange)){
@@ -205,14 +205,17 @@ ezPosSpecErrorRate = function(bam, ReferenceGenome, nMaxReads=100000){
     ezWrite("last pos: ", length(ReferenceGenome))
     idx = which(isOutOfRange)
     idx = idx[1:min(10, length(idx))]
-    badAlignments = data.frame(pos=bam$pos[idx], cigar=bam$cigar[idx], start=bam$pos[idx], width=readLength[idx])
+    badAlignments = data.frame(pos=bam$pos[idx], cigar=bam$cigar[idx], 
+                               start=bam$pos[idx], width=readLength[idx])
     print(badAlignments)
   }
   indexKeep = which(!hasGap & !isOutOfRange)
   if (length(indexKeep) > nMaxReads){
     indexKeep = sample(indexKeep, size=nMaxReads, replace=FALSE)
   }
-  ezWrite("#alignments: ", length(bam$cigar), " #valid alignments: ", sum(!hasGap & !isOutOfRange), "#used:", length(indexKeep))
+  ezWrite("#alignments: ", length(bam$cigar),
+          " #valid alignments: ", sum(!hasGap & !isOutOfRange), 
+          " #used:", length(indexKeep))
   if (length(indexKeep) == 0){
     return(NULL)
   }
@@ -302,7 +305,8 @@ getStatsFromBam = function(param, bamFile, sm, gff=NULL, repeatsGff=NULL,
   }
   if (is.null(param$splitByChrom) || param$splitByChrom){
     result = getStatsFromBamParallel(seqLengths, param, bamFile, sm, 
-                                     gff, repeatsGff, mc.cores=ezThreads(), nReads=nReads)
+                                     gff, repeatsGff, mc.cores=param$cores, 
+                                     nReads=nReads)
   } else {
     result = getStatsFromBamSingleChrom(NULL, param, bamFile, sm, gff, 
                                         repeatsGff)
@@ -327,15 +331,15 @@ getStatsFromBam = function(param, bamFile, sm, gff=NULL, repeatsGff=NULL,
   #                              function(x){as.integer(x[round(seq(1, length(x), length.out=101))])})
   sampledTranscriptCov <- ezMclapply(transcriptCov, ## RleList will be slow. use list
                                 function(x){as.integer(x[round(seq(1, length(x), length.out=101))])},
-                                mc.preschedule=TRUE, mc.cores=ezThreads())
+                                mc.preschedule=TRUE, mc.cores=param$cores)
   sampledTranscriptCov <- do.call(cbind, sampledTranscriptCov)
   
   trUse = colSums(sampledTranscriptCov) > 0
   sampledTranscriptCov = sampledTranscriptCov[ , trUse, drop=FALSE]
   trLength = transcriptLengthTotal[trUse]
-  lengthClasses = ezCut(trLength, breaks=c(399, 999, 4000), 
-                        labels=c("less than 400nt", "400 to 1000nt", 
-                                 "1000 to 4000nt", "above 4000nt"))
+  lengthClasses = ezCut(trLength, breaks=c(399, 1000, 1200, 4000), 
+                        labels=c("less than 400nt", "400 to 999nt", 
+                                 "1000 to 1200nt", "1201 to 4000", "above 4000nt"))
   genebody_coverage = list()
   for (lc in levels(lengthClasses)){
     isInLc = lengthClasses == lc
@@ -815,3 +819,4 @@ getDupRateFromBam <- function(bamFile, param=NULL, gtfFn,
                         paired=paired, threads=threads)
   return(dm)
 }
+

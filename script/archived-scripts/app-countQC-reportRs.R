@@ -63,7 +63,7 @@ runNgsCountQC = function(htmlFile="00index.html",
     return("Success")
   }
   
-  signal = shiftZeros(getSignalSE(rawData), param$minSignal)
+  signal = shiftZeros(getSignal(rawData), param$minSignal)
   presentFlag = assays(rawData)$presentFlag
   signalRange = range(signal, na.rm=TRUE)
   log2Signal = log2(signal)
@@ -105,8 +105,8 @@ runNgsCountQC = function(htmlFile="00index.html",
     if (!is.null(seqAnno)){
       combined = cbind(seqAnno[rownames(combined), ,drop=FALSE], combined)
     }
-    if (!is.null(combined$width)){
-      combined$width = as.integer(combined$width)
+    if (!is.null(combined$featWidth)){
+      combined$featWidth = as.integer(combined$featWidth)
     }
     countFile = paste0(ezValidFilename(param$name), "-raw-count.txt")
     ezWrite.table(assays(rawData)$counts, file=countFile, 
@@ -126,7 +126,7 @@ runNgsCountQC = function(htmlFile="00index.html",
     topGenes = unique(as.character(topGenesPerSample))
     
     combined = combined[order(combined$"Maximum signal", decreasing = TRUE), , drop=FALSE]
-    useInInteractiveTable = c("seqid", "gene_name", "Maximum signal", "Mean signal", "description", "width", "gc")
+    useInInteractiveTable = c("seqid", "gene_name", "Maximum signal", "Mean signal", "description", "featWidth", "gc")
     useInInteractiveTable = intersect(useInInteractiveTable, colnames(combined))
     tableLink = sub(".txt", "-viewHighExpressionGenes.html", signalFile)
     combinedTopGenes = combined[which(rownames(combined) %in% topGenes),] ## select top genes
@@ -136,10 +136,10 @@ runNgsCountQC = function(htmlFile="00index.html",
                        title=paste("Showing the top", nRows, "genes with the highest expression"))
     
     rpkmFile = paste0(ezValidFilename(param$name), "-rpkm.txt")
-    ezWrite.table(getRpkmSE(rawData), file=rpkmFile, head="Feature ID", digits=4) 
+    ezWrite.table(getRpkm(rawData), file=rpkmFile, head="Feature ID", digits=4) 
     
     tpmFile = paste0(ezValidFilename(param$name), "-tpm.txt")
-    ezWrite.table(getTpmSE(rawData), file=tpmFile, head="Feature ID", digits=4)
+    ezWrite.table(getTpm(rawData), file=tpmFile, head="Feature ID", digits=4)
     
     dataFiles = c(countFile, signalFile, rpkmFile, tpmFile)
     titles[["Data Files"]] = "Data Files"

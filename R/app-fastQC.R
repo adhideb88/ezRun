@@ -10,27 +10,43 @@ ezMethodFastQC = function(input=NA, output=NA, param=NA,
                           htmlFile="00index.html"){
   require(rmarkdown)
   setwdNew(basename(output$getColumn("Report")))
+  
+  # Preprocessing
+  isUBam <- input$readType() == "bam"
+  if(isTRUE(isUBam)){
+    if(isTRUE(param$perLibrary)){
+      fastqInput <- ezMethodBam2Fastq(input=input, param=param,
+                                      OUTPUT_PER_RG=FALSE)
+    }else{
+      ## We only support one uBam when it's per cell mode
+      stopifnot(input$getLength() == 1L)
+      fastqInput <- ezMethodBam2Fastq(input=input, param=param,
+                                      OUTPUT_PER_RG=TRUE)
+    }
+    input <- fastqInput$copy()
+  }
   dataset = input$meta
   samples = rownames(dataset)
+  
   files = c()
   for (sm in samples){
     files[paste0(sm, "_R1")] = input$getFullPaths("Read1")[sm]
-    if (!is.null(dataset$Read2)){
-      files[paste0(sm, "_R2")] = input$getFullPaths("Read2")[sm]    
+    if(isTRUE(param$paired)){
+      files[paste0(sm, "_R2")] = input$getFullPaths("Read2")[sm]
     }
   }
   nFiles = length(files)
   
   ## guess the names of the report directories that will be creatd by fastqc
-  reportDirs = sub(".fastq.gz", "_fastqc", basename(files))
-  reportDirs = sub(".fq.gz", "_fastqc", reportDirs)
-  reportDirs = sub(".bam", "_fastqc", reportDirs)
+  reportDirs = sub("\\.fastq(\\.gz)*$", "_fastqc", basename(files))
+  reportDirs = sub("\\.fq(\\.gz)*$", "_fastqc", reportDirs)
+  reportDirs = sub("\\.bam$", "_fastqc", reportDirs)
   stopifnot(!duplicated(reportDirs))
   filesUse = files[!file.exists(reportDirs)]
   if (length(filesUse) > 0){
-    cmd = paste("fastqc", "--extract -o . -t", min(ezThreads(), 8), "-a", FASTQC_ADAPTERS,
-                param$cmdOptions,
-                paste(filesUse, collapse=" "),
+    cmd = paste("fastqc", "--extract -o . -t", min(param$cores, 8),
+                "-a", FASTQC_ADAPTERS, "--kmers 7",
+                param$cmdOptions, paste(filesUse, collapse=" "),
                 "> fastqc.out", "2> fastqc.err")
     result = ezSystem(cmd)
   }
@@ -106,9 +122,11 @@ ezMethodFastQC = function(input=NA, output=NA, param=NA,
     #                     smy[[2]])
     #   tbl = ezMatrix("", rows=rowNames, cols=colNames)
     # }
-    href = paste0(reportDirs[i], "/fastqc_report.html#M", 0:(ncol(tbl)-1))[colnames(tbl) %in% smy[[2]]]
+    href = paste0(reportDirs[i], "/fastqc_report.html#M", 
+                  0:(ncol(tbl)-1))[colnames(tbl) %in% smy[[2]]]
     img = paste0(reportDirs[i], 	"/Icons/", statusToPng[smy[[1]]])
-    tbl[i, colnames(tbl) %in% smy[[2]]] = paste0("<a href=", href, "><img src=", img, "></a>")
+    tbl[i, colnames(tbl) %in% smy[[2]]] = paste0("<a href=", href, 
+                                                 "><img src=", img, "></a>")
   }
   colnames(tbl) <- ifelse(colnames(tbl) %in% names(plotPages),
                           paste0("<a href=", plotPages[colnames(tbl)], 
@@ -118,7 +136,7 @@ ezMethodFastQC = function(input=NA, output=NA, param=NA,
   
   ans4Report[["Fastqc quality measures"]] <- tbl
   
-  qualMatrixList = ezMclapply(files, getQualityMatrix, mc.cores=ezThreads())
+  qualMatrixList = ezMclapply(files, getQualityMatrix, mc.cores=param$cores)
   ans4Report[["Per Base Read Quality"]] <- qualMatrixList
   
   ## debug
@@ -128,7 +146,12 @@ ezMethodFastQC = function(input=NA, output=NA, param=NA,
   rmarkdown::render(input="FastQC.Rmd", envir = new.env(),
                     output_dir=".", output_file=htmlFile, quiet=TRUE)
   
-  ezSystem(paste("rm -rf ", paste0(reportDirs, ".zip", collapse=" ")))
+  ## Cleaning
+  if(isTRUE(isUBam)){
+    file.remove(files)
+  }
+  unlink(paste0(reportDirs, ".zip"), recursive = TRUE)
+  
   return("Success")
 }
 
@@ -155,6 +178,8 @@ EzAppFastqc <-
                   "Initializes the application using its specific defaults."
                   runMethod <<- ezMethodFastQC
                   name <<- "EzAppFastqc"
+                  appDefaults <<- rbind(perLibrary=ezFrame(Type="logical",  DefaultValue=TRUE,  Description="Run FastQC per library or per cell for single cell experiment")
+                  )
                 }
               )
   )
@@ -196,7 +221,7 @@ plotReadCountToLibConc = function(dataset, colname){
                  text=rownames(dataset)) %>%
            add_markers() %>%
            add_text(textposition = "top right") %>%
-           layout(showlegend = FALSE)
+          plotly::layout(showlegend = FALSE)
         a <- list(
           x = max(dataset$'Read Count'),
           y = max(dataset[[colname]]),
@@ -205,7 +230,7 @@ plotReadCountToLibConc = function(dataset, colname){
           yref = "y",
           showarrow = FALSE
         )
-        p <- p %>% layout(
+        p <- p %>% plotly::layout(
           shapes=list(type='line', line=list(dash="dash"),
                       x0=xmin, x1=xmax,
                       y0=p_abline(xmin, slope, intercept), 
@@ -254,23 +279,29 @@ plotQualityMatrixAsHeatmapGG2 = function(qualMatrixList, isR2=FALSE,
                     at=at, labels=as.character(at^2))
     plotList[[nm]][["Avg Qual Colors"]] <- p
     
-    result = ezMatrix(0, dim=dim(qualMatrixList[[idx[1]]]))
+    #result = ezMatrix(0, dim=dim(qualMatrixList[[idx[1]]]))
+    result = ezMatrix(0, dim=apply(sapply(qualMatrixList[idx], dim),1, max))
     resultCount = result
     for(i in idx){
       qm = qualMatrixList[[i]]
-      if (any(dim(qm) > dim(result))){
-        oldResult = result
-        result = ezMatrix(0, dim=dim(qm))
-        result[1:nrow(oldResult), 1:ncol(oldResult)] = oldResult
-        oldResultCount = resultCount
-        resultCount = ezMatrix(0, dim=dim(qm))
-        resultCount[1:nrow(oldResultCount), 1:ncol(oldResultCount)] = oldResultCount
-      }
+      # if (any(dim(qm) > dim(result))){
+      #   oldResult = result
+      #   result = ezMatrix(0, dim=dim(qm))
+      #   result[1:nrow(oldResult), 1:ncol(oldResult)] = oldResult
+      #   oldResultCount = resultCount
+      #   resultCount = ezMatrix(0, dim=dim(qm))
+      #   resultCount[1:nrow(oldResultCount), 1:ncol(oldResultCount)] = oldResultCount
+      # }
       result[1:nrow(qm), 1:ncol(qm)] = result[1:nrow(qm), 1:ncol(qm)] + qm
       resultCount[1:nrow(qm), 1:ncol(qm)] = resultCount[1:nrow(qm), 1:ncol(qm)] + 1
     }
     result = result / resultCount
-    avgQual = signif(prop.table(result,2) * 100, digits=3)
+    #result[is.nan(result)] <- 0
+    ## The ahrd way to deal with NaN in result
+    result <- sweep(result, MARGIN=2, 
+                    STATS=colSums(result, na.rm=TRUE), FUN="/")
+    #avgQual = signif(prop.table(result, 2) * 100, digits=3)
+    avgQual = signif(result * 100, digits=3)
     p = plotQualityHeatmapGG2(result=sqrt(avgQual), 
                               colorRange=c(minPercent, maxPercent), 
                               colors=colorsGray, 
@@ -288,8 +319,9 @@ plotQualityMatrixAsHeatmapGG2 = function(qualMatrixList, isR2=FALSE,
     
     for(sampleName in names(qualMatrixList[idx])){
       qm = qualMatrixList[[sampleName]]
-      diffResult = signif(prop.table(qm,2)*100, digits=3) - avgQual[1:nrow(qm), 
-                                                                    1:ncol(qm)]
+      qm <- sweep(qm, MARGIN=2, 
+                  STATS=colSums(qm, na.rm=TRUE), FUN="/")
+      diffResult = signif(qm*100, digits=3) - avgQual[1:nrow(qm), 1:ncol(qm)]
       p = plotQualityHeatmapGG2(diffResult, colorRange=c(minDiff, maxDiff),
                                 colors=getBlueRedScale(), 
                                 main=paste("diffReadsQuality", sampleName, 
@@ -385,9 +417,6 @@ getQualityMatrix <- function(fn){
   ## This implementation is faster than the FastqStreamer.
   require(ShortRead)
   require(Biostrings)
-  #require(GenomicFiles)
-  #require(Rsamtools)
-  #require(GenomicAlignments)
   nReads <- 3e5
   
   if(grepl("\\.bam$", fn)){
@@ -409,7 +438,8 @@ getQualityMatrix <- function(fn){
     ezSystem(cmd)
     tempFastqFn <- paste(Sys.getpid(), "temp.fastq", sep="-")
     on.exit(file.remove(tempFastqFn), add=TRUE)
-    bam2fastq(bamFns=tempBamFn, fastqFns=tempFastqFn, paired=FALSE)
+    bam2fastq(bamFn=tempBamFn, OUTPUT_PER_RG=FALSE,
+              fastqFns=tempFastqFn, paired=FALSE)
     reads <- readFastq(tempFastqFn)
   }else{
     f <- FastqSampler(fn, nReads) ## we sample no more than 300k reads.
@@ -437,6 +467,11 @@ plateStatistics <- function(dataset,
   if(any(!colsExist)){
     warning("No column ", colname[!colsExist], " in dataset!")
     colname <- colname[colsExist]
+  }
+  colsNumeric <- sapply(dataset[, colname, drop=FALSE], is, "numeric")
+  if(any(!colsNumeric)){
+    warning("The column ", colname[!colsNumeric], " is non-numeric.")
+    colname <- colname[colsNumeric]
   }
   colsNA <- is.na(colSums(dataset[, colname, drop=FALSE]))
   if(any(colsNA)){
@@ -473,68 +508,64 @@ plateStatistics <- function(dataset,
         return(NA)
       }
       plateRow <- str_extract(platePos, "[[:alpha:]]")
-      plateCol <- str_extract(platePos, "\\d+")
+      plateCol <- as.numeric(str_extract(platePos, "\\d+"))
       ans[[names(datasetByPlate)[i]]] <- list()
       for(oneCol in colname){
+        ##always the entire plate should be shown which is either 8x12 or 16x24 ....
         counts <- datasetByPlate[[i]][[oneCol]]
-        countMatrix <- ezMatrix(NA, rows=LETTERS[1:which(LETTERS==max(plateRow))],
-                                cols=seq_len(max(as.integer(plateCol))))
+        countMatrix <- ezMatrix(NA, rows=LETTERS[1:ifelse(max(plateRow) > "I", 16, 8)],
+                                cols=seq_len(ifelse(max(as.integer(plateCol)) > 12, 24, 12)))
         for(j in seq_len(length(counts))) { countMatrix[plateRow[j], plateCol[j]] <- counts[j]}
         ans[[names(datasetByPlate)[i]]][[oneCol]] <- countMatrix
       }
     }
     return(ans)
   }else{
+    warning("PlatePosition [Characteristic] information is not available!")
     return(NA)
   }
 }
 
-heatmapPlate <- function(x, title="unnamed", center=TRUE, log10=TRUE){
+heatmapPlate <- function(x, title="unnamed", center=TRUE, log10=TRUE, ...){
   require(plotly)
   ## do not plot if there are only NA or zeros
   if (all(x %in% c(NA, 0))){
     return(NULL)
   }
-  ## shift zeros a bit
-  isZero = x == 0
-  isZero[is.na(isZero)] = FALSE
-  x[isZero] = min(0.25 * x[x >0], na.rm = TRUE)
   if(isTRUE(log10)){
+    ## shift zeros a bit
+    isZero = x == 0
+    isZero[is.na(isZero)] = FALSE
+    x[isZero] = min(0.25 * x[x >0], na.rm = TRUE)
+    
     x <- log10(x)
     if(isTRUE(center)){
       medianX <- median(x, na.rm = TRUE)
-      p <- plot_ly(z=x, x=colnames(x),
-                   y=rownames(x), type="heatmap",
-                   zmin=medianX-log10(2),
-                   zmax=medianX+log10(2),
+      p <- plot_ly(z=x, x=colnames(x), y=rownames(x), type="heatmap",
+                   zmin=medianX-log10(2), zmax=medianX+log10(2),
                    hoverinfo="text", 
                    text=matrix(paste0("10^", format(x, digits=3), "=", 
                                       10^x), ncol=ncol(x)),
-                   width = 500*(1 + sqrt(5))/2, height = 500)
+                   ...)
     }else{
-      p <- plot_ly(z=x, x=colnames(x),
-                   y=rownames(x), type="heatmap",
+      p <- plot_ly(z=x, x=colnames(x), y=rownames(x), type="heatmap",
                    hoverinfo="text", 
                    text=matrix(paste0("10^", format(x, digits=3), "=", 
                                       10^x), ncol=ncol(x)),
-                   width = 500*(1 + sqrt(5))/2, height = 500)
+                   ...)
     }
   }else{
     if(isTRUE(center)){
       medianX <- median(x, na.rm = TRUE)
-      p <- plot_ly(z=x, x=colnames(x),
-                   y=rownames(x), type="heatmap",
-                   zmin=medianX/2, zmax=medianX*2,
-                   width = 500*(1 + sqrt(5))/2, height = 500)
+      p <- plot_ly(z=x, x=colnames(x), y=rownames(x), type="heatmap",
+                   zmin=0, zmax=medianX*2, ...)
     }else{
-      p <- plot_ly(z=x, x=colnames(x),
-                   y=rownames(x), type="heatmap",
-                   width = 500*(1 + sqrt(5))/2, height = 500)
+      p <- plot_ly(z=x, x=colnames(x), y=rownames(x), type="heatmap", ...)
     }
   }
   
-  p <- p %>% layout(xaxis=list(autotick = FALSE, dtick=1),
-                    yaxis=list(autorange = "reversed"),
-                    title=title)
+  p <- p %>% plotly::layout(xaxis=list(autotick = FALSE, dtick=1),
+                            yaxis=list(autorange = "reversed"),
+                            title=title)
   p
 }

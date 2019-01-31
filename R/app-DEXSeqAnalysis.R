@@ -362,6 +362,9 @@ getGeneTable <- function(pdxr, param){
                                     abs(results[[log2column]]) > param$minExonLog2Ratio,
                                   results$groupID, sum, na.rm = TRUE)[genetable$gene_id]
   genetable$meanRawCount = round(tapply(results$exonBaseMean, results$groupID, sum)[genetable$gene_id],3)
+  genetable = genetable[genetable$exon_changes > 0, ]
+  ####TODO: get ExonLog2FC only for significant exons with realistic log2FC calculation (pseudo count +10), only exon longer than >50nt
+  ####Filter based on ExonLog2FC  
   genetable$max_ExonLog2FC = round(tapply(results[[log2column]], results$groupID, 
                                           function(x){
                                             idx = which.max(abs(x))
@@ -377,7 +380,7 @@ getGeneTable <- function(pdxr, param){
   genetable = genetable[order(genetable$fdr),]
   ezWrite.table(genetable, file=paste0("result--", param$comparison, "--DEXSeqGeneResult.txt"), head="gene_id")
   require(DT)
-  geneTableSel = genetable[!is.na(genetable$fdr) & genetable$fdr < param$fdr, ]
+  geneTableSel = genetable[!is.na(genetable$fdr) & genetable$fdr < param$fdr & abs(genetable$max_ExonLog2FC) > param$minExonLog2Ratio, ]
   x = datatable(geneTableSel, escape = F,rownames = FALSE, filter = 'bottom',extensions = c('ColReorder','Buttons'),
                 caption = paste('Candidates DEXSeq:',param$comparison, sep=''),
                 options = list(
@@ -443,7 +446,7 @@ DEXSeqCounting <- function(input = input, output = output, param = param){
     sCountfileExt <- param$countfile_ext
   ### # call counting routine
   ramPerJob = round((param[['ram']]*1000)/param[['cores']] * 0.25) ## keep a reserve of 25% RAM ... for samtools being greedhy and the Dexseq python script
-  vCountFiles <- ezMclapply(bamFiles, runCountSingleBam, sGffFile, sCountfileExt, param$strandMode, param$paired, ramPerJob, mc.cores = param[['cores']])
+  vCountFiles <- ezMclapply(bamFiles, runCountSingleBam, sGffFile, sCountfileExt, param$strandMode, param$paired, ramPerJob, param$bgExpression, mc.cores = param[['cores']])
 
   return("Success")
 }
@@ -478,7 +481,7 @@ convertGtfToGff <- function(psGtfFile, psGffFile) {
 
 #' Run counts for a single BAM file
 #'
-runCountSingleBam <- function(psBamFile, psGffFile, psCountfileExt, strandMode, Paired, ramPerJob){
+runCountSingleBam <- function(psBamFile, psGffFile, psCountfileExt, strandMode, Paired, ramPerJob, bgExpression){
   if(Paired){
     # samCmd = paste("samtools", "sort -n" , psBamFile, "-m", paste0(ramPerJob,"M"), "-O SAM")
     stopifnot(psBamFile != basename(psBamFile))
@@ -502,6 +505,9 @@ runCountSingleBam <- function(psBamFile, psGffFile, psCountfileExt, strandMode, 
 
   sPyCountCmd <- paste(samCmd, "|", cmd, psGffFile, "-", sCountBaseFn, "2>", paste0(sCountBaseFn, ".err"))
   ezSystem(sPyCountCmd)
+  myCounts = ezRead.table(sCountBaseFn, row.names = NULL, header = F)
+  myCounts[,2] = myCounts[,2] + bgExpression
+  ezWrite.table(myCounts, sCountBaseFn, col.names = F, row.names = F)
   return(file.path(getwd(), sCountBaseFn))
 }
 

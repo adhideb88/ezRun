@@ -306,8 +306,8 @@ plotBamStat = function(resultList, dataset, param, htmlFile=NULL){
       use = TRUE
     }
     rawData <- rawData[use, ]
-    assays(rawData)$rpkm = getRpkmSE(rawData)
-    assays(rawData)$tpm = getTpmSE(rawData)
+    assays(rawData)$rpkm = getRpkm(rawData)
+    assays(rawData)$tpm = getTpm(rawData)
     
     if (is.null(param$normMethod)){
       param$normMethod = "logMean"

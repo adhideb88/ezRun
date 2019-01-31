@@ -21,12 +21,15 @@ EzAppTeqc <-
                   appDefaults <<- rbind(designFile=ezFrame(Type="character",  DefaultValue="",  Description="file describing the regions selected by the enrichment kit"),
                                     covUniformityPlot=ezFrame(Type="logical", DefaultValue="TRUE", Description="generate plots for coverage uniformity?"),
                                     covTargetLengthPlot=ezFrame(Type="logical", DefaultValue="TRUE", Description="generate plots for coverage vs. target length"),
-                                    duplicatesPlot=ezFrame(Type="logical", DefaultValue="TRUE", Description="generate plots for duplicates"))
+                                    duplicatesPlot=ezFrame(Type="logical", DefaultValue="TRUE", Description="generate plots for duplicates"),
+                                    removeDuplicates=ezFrame(Type="logical", DefaultValue="TRUE", Description="remove Duplicates for CovCalculations"))
                 }
               )
   )
 
 ezMethodTeqc = function(input=NA, output=NA, param=NA){
+  require(TEQC)
+  library(chromstaR)
   require(GenomicAlignments)
   param[['build']] = unique(input$meta[['build']])
   setwdNew(basename(output$getColumn("Report")))
@@ -39,14 +42,18 @@ ezMethodTeqc = function(input=NA, output=NA, param=NA){
   sGtfFile <- param$ezRef@refFeatureFile
   myGTF <- rtracklayer::import(sGtfFile)
   myGTF <- myGTF[mcols(myGTF)$type=='exon']
+  myGTF <- myGTF[myGTF$gene_biotype=='protein_coding' & myGTF$source =='protein_coding',]
+  
   keepCols = c('seqnames','start','end','strand','type','gene_id','gene_name')
-  gtf_df = data.frame(myGTF,stringsAsFactors = F)
+  gtf_df = data.frame(myGTF,stringsAsFactors = FALSE)
   gtf_df = unique(gtf_df[,keepCols])
   ir <- IRanges(start = gtf_df$start, end = gtf_df$end)
-  allExons <- RangedData(ranges = ir, space = gtf_df$seqnames, gene_id=gtf_df$gene_id, gene_name=gtf_df$gene_name, orientation = as.character(gtf_df$strand),typ=gtf_df$type)
+  allExons <- RangedData(ranges = ir, space = gtf_df$seqnames, gene_id = gtf_df$gene_id, gene_name = gtf_df$gene_name, 
+                         orientation = as.character(gtf_df$strand),typ = gtf_df$type)
+  allExons <- as(allExons, "GRanges")
   
   #Create one Report per Sample:
-  destDirs = ezMclapply(jobList, runTEQC, allExons, param, mc.cores=ezThreads())
+  destDirs = ezMclapply(jobList, runTEQC, allExons, param, mc.cores = param$cores)
   
   #Create MultiSampleReport:
   destDirs = unlist(destDirs)
@@ -128,15 +135,37 @@ runTEQC = function(file, allExons, param){
   destDir = paste0("report_", sampleName)
   targetsfile = param$designFile
   genomeSize = sum(as.numeric(system(paste("samtools","view -H",file,"|grep @SQ|cut -f 3|sed 's/LN://'"),intern = T)))
-  reads=TEQC::get.reads(file, filetype="bam")
-  targets=TEQC::get.targets(targetsfile, skip=grep("^track", readLines(targetsfile, n=200)))
+  
+  
+  reads <- readBamFileAsGRanges(file, chromosomes=NULL, pairedEndReads = param$paired, 
+                                   max.fragment.width = 1000, min.mapq = 10, remove.duplicate.reads = param$removeDuplicates)
+  
+#  reads=TEQC::get.reads(file, filetype = "bam")
+#  if(param$paired){
+#    reads <- reads2pairs(reads)$readpairs
+#    if(param$removeDuplicates){
+#        ID.nondups <- names(unique(reads))
+#        reads <- reads[names(reads) %in% ID.nondups,,drop = TRUE]
+#    }
+#  } else {
+#      if(param$removeDuplicates){
+#          reads <- unique(reads)  
+#      } 
+#  }
+  skip = grep("^track", readLines(targetsfile, n=200))
+  if (length(skip) == 0) skip = 0
+  targets=TEQC::get.targets(targetsfile, skip=skip)
+  #clean reads from mappings to unsupported chromosomes
+  reads <- keepSeqlevels(reads, levels(seqnames(targets)), pruning.mode="coarse")
+  seqlevels(reads) = as.character(unique(seqnames(reads)))
+  strand(reads) = '*'
   
   TEQC::TEQCreport(sampleName=sampleName,
                    CovUniformityPlot = param$covUniformityPlot, CovTargetLengthPlot = param$covTargetLengthPlot, duplicatesPlot=param$duplicatesPlot,#CovGCPlot = T,
                    k = c(1,5,10,20,30,50),
                    targetsName=basename(dirname(targetsfile)),
                    referenceName=param[['refBuild']],
-                   pairedend=param$paired,
+                   pairedend=FALSE,
                    destDir=destDir,
                    reads=reads,
                    targets=targets,

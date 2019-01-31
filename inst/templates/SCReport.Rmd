@@ -1,0 +1,347 @@
+---
+title:  "`r metadata(sce)$param$name`"
+author: "Functional Genomics Center Zurich"
+output: 
+  html_document:
+    self_contained: false
+    includes:
+      in_header: fgcz_header.html
+    css: fgcz.css
+editor_options: 
+  chunk_output_type: console
+---
+
+Started on `r format(Sys.time(), "%Y-%m-%d %H:%M:%S")`
+
+```{r setup, include=FALSE}
+# input for this report: sce, output
+require(ezRun)
+require(Seurat)
+require(dplyr)
+require(tibble)
+require(kableExtra)
+require(fastICA)
+require(Matrix)
+require(readr)
+require(slingshot)
+require(RColorBrewer)
+require(SummarizedExperiment)
+## ----------------------------------------------
+## debug
+# title:  "`r metadata(sce)$param$name`"
+# sce <- readRDS("/scratch/gtan/dev/SCReports-p2284/AVM_17_08_2018_SCReport/sce.rds")
+# sce <- readRDS("/srv/gstore/projects/p2838/SCReport_32064_2019-01-28--16-12-45/NCC_Trpv5_Tomato_sc_A01_SCReport/sce.rds")
+# sce <- readRDS("/scratch/gtan/debug/quickDebug/sce.rds")
+## end of debug
+debug <- FALSE
+
+scData <- metadata(sce)$scData
+param <- metadata(sce)$param
+output <- metadata(sce)$output
+
+pvalue_allMarkers <- 0.05
+pvalue_all2allMarkers <- 0.01
+```
+
+```{r javascript, echo=FALSE, results='asis'}
+jsFile = system.file("extdata/enrichr.js", package="ezRun", mustWork=TRUE)
+invisible(file.copy(from=jsFile, to=basename(jsFile), overwrite=TRUE))
+cat(paste0("<SCRIPT language=\"JavaScript\" SRC=\"", basename(jsFile), "\"></SCRIPT>"))
+```
+
+```{r pos markers, echo=FALSE}
+markers <- FindAllMarkers(object=scData, only.pos=TRUE,
+                          return.thresh = pvalue_allMarkers)
+posMarkersFn <- "pos_markers.tsv"
+ezWrite.table(markers, posMarkersFn)
+
+## Significant markers
+cm <- markers[ ,c("gene","cluster","avg_logFC","p_val_adj")]
+rownames(cm) <- NULL
+```
+
+```{r pos markers all2all, echo=FALSE}
+if(param$all2allMarkers){
+  clusterCombs <- combn(levels(scData@ident), m=2)
+  all2allMarkers <- mcmapply(FindMarkers, as.integer(clusterCombs[1, ]), 
+                             as.integer(clusterCombs[2, ]),
+                             MoreArgs = list(object=scData,
+                                             only.pos=FALSE),
+                             mc.preschedule=FALSE,
+                             mc.cores=min(4L, param$cores),
+                             SIMPLIFY=FALSE)
+  all2allMarkers <- lapply(all2allMarkers, function(x){
+    x[x$p_val <= pvalue_all2allMarkers, ]
+  })
+  names(all2allMarkers) <- apply(clusterCombs, 2, paste, collapse="vs")
+}
+```
+
+```{r fastICA, echo=FALSE}
+tSNE_data <- as_tibble(scData@dr$tsne@cell.embeddings,
+                       rownames="cells")
+tSNE_data <- rename(tSNE_data, X=`tSNE_1`, Y=`tSNE_2`)
+tSNE_data$cluster <- scData@ident
+
+if(param$runPseudoTime){
+  cd <- as.matrix(scData@data)
+  set.seed(10)
+  a <- fastICA(cd, 2, alg.typ = "deflation", fun = "logcosh",
+               alpha = 1, method = "C", row.norm = FALSE, maxit = 200,
+               tol = 0.0001, verbose = FALSE)
+  tSNE_data$pseudotime <- a$A[1,]
+}
+tSNEFn <- "tSNE_data.tsv"
+write_tsv(tSNE_data, path=tSNEFn)
+```
+
+## Clustering Results {.tabset}
+
+### Cell clustering tSNE
+
+This analysis was done with the R package Seurat. The distance metric which drives the clustering analysis is based on Principal Component Analysis.  In the plot below each dot is a cell.
+We eliminated the genes that are expressed in < `r param$minCellsPerGene` cells. We eliminated the cells that have < `r param$minGenesPerCell` genes detected, or > `r param$maxGenesPerCell` genes. We have `r sum(summary(scData@ident))` cells left in total.
+
+```{r tSNE, echo=FALSE, results='asis'}
+# Coloured by plate/run if available
+if(length(unique(scData@meta.data$Plate)) >= 2){
+  TSNEPlot(object=scData, group.by="Plate")
+}
+# Coloured by cluster
+TSNEPlot(object=scData, do.label=TRUE)
+
+kable(tibble(Cluster=names(summary(scData@ident)),
+             "# of cells"=summary(scData@ident)),
+      row.names=FALSE, format="html",
+      caption="Number of cells in each cluster") %>%
+  kable_styling(bootstrap_options = "striped", full_width = F,
+                position = "float_right")
+```
+
+```{r pc.genes, echo=FALSE}
+if(ezIsSpecified(param$pcGenes)){
+  cat("Selected genes for clustering:\n")
+  metadata(sce)[["pc.genes"]]
+  cat("\n")
+}
+```
+
+```{r gene mean per cluster, echo=FALSE}
+tr_cnts <- expm1(scData@data)
+geneMeans <- rowsum(t(as.matrix(tr_cnts)), group=scData@ident)
+geneMeans <- sweep(geneMeans, 1,
+                   STATS=table(scData@ident)[rownames(geneMeans)], FUN="/")
+geneMeans <- log1p(t(geneMeans))
+colnames(geneMeans) <- paste("cluster", colnames(geneMeans), sep="_")
+geneMeanPerClusterFn <- "gene_means_per_cluster.txt"
+ezWrite.table(geneMeans, geneMeanPerClusterFn)
+
+geneMeans <- Matrix::rowMeans(tr_cnts)
+geneMeans <- log1p(geneMeans)
+geneMeansFn <- "gene_means.txt"
+ezWrite.table(geneMeans, geneMeansFn)
+```
+
+[`r geneMeanPerClusterFn`](`r geneMeanPerClusterFn`)
+
+[`r geneMeansFn`](`r geneMeansFn`)
+
+[`r tSNEFn`](`r tSNEFn`)
+
+### Control of the cell clustering
+
+```{r FeaturePlot, echo=FALSE, eval=!debug}
+FeaturePlot(object = scData, features.plot = "nGene", 
+            reduction.use = "tsne", no.legend = FALSE)
+FeaturePlot(object = scData, features.plot = "nUMI",
+            reduction.use = "tsne", no.legend = FALSE)
+FeaturePlot(object = scData, features.plot = "perc_mito",
+            reduction.use = "tsne", no.legend = FALSE)
+```
+
+### Top cluster markers
+List of all positive cluster markers can be accessed [here](`r posMarkersFn`).
+
+```{r enrichr markers, echo=FALSE, results='asis'}
+if(doEnrichr(param)){
+  genesPerCluster <- split(markers$gene, markers$cluster)
+  jsCall = paste0('enrich({list: "', sapply(genesPerCluster, paste, collapse="\\n"), '", popup: true});')
+  enrichrCalls <- paste0("<a href='javascript:void(0)' onClick='", jsCall, 
+                         "'>Analyse at Enrichr website</a>")
+  enrichrTable <- tibble(Cluster=names(genesPerCluster),
+                         "# of markers"=lengths(genesPerCluster),
+                         "Enrichr link"=enrichrCalls)
+  kable(enrichrTable, format="html", escape=FALSE,
+        caption=paste0("GeneSet enrichment: genes with pvalue ", pvalue_allMarkers)) %>%
+    kable_styling("striped", full_width = F, position = "left")
+}
+```
+
+```{r markers table, echo=FALSE}
+caption ="Expression differences of cluster marker genes"
+ezInteractiveTableRmd(cm, digits=4, title=caption)
+```
+
+```{r section all2all, echo=FALSE, results='asis'}
+if(doEnrichr(param) && param$all2allMarkers){
+  cat("#### All clusters against all clusters comparison")
+  cat("\n")
+}
+```
+
+```{r enrichr all2all markers, echo=FALSE, results='asis'}
+if(doEnrichr(param) && param$all2allMarkers){
+  for(comparison in names(all2allMarkers)){
+    write_tsv(as_tibble(all2allMarkers[[comparison]], rownames="Gene"),
+              path=paste0(comparison, ".tsv"))
+  }
+  genesAllPerCluster <- lapply(all2allMarkers, rownames)
+  genesUpPerCluster <- lapply(all2allMarkers, function(x){rownames(x)[x$avg_logFC > 0]})
+  genesDownPerCluster <- lapply(all2allMarkers, function(x){rownames(x)[x$avg_logFC < 0]})
+  
+  jsCall_all = paste0('enrich({list: "', sapply(genesAllPerCluster, paste, collapse="\\n"), '", popup: true});')
+  jsCall_up = paste0('enrich({list: "', sapply(genesUpPerCluster, paste, collapse="\\n"), '", popup: true});')
+  jsCall_down = paste0('enrich({list: "', sapply(genesDownPerCluster, paste, collapse="\\n"), '", popup: true});')
+  
+  enrichrCalls_all <- paste0("<a href='javascript:void(0)' onClick='", jsCall_all,
+                         "'>Analyse at Enrichr website</a>")
+  enrichrCalls_up <- paste0("<a href='javascript:void(0)' onClick='", jsCall_up,
+                         "'>Analyse at Enrichr website</a>")
+  enrichrCalls_down <- paste0("<a href='javascript:void(0)' onClick='", jsCall_down,
+                         "'>Analyse at Enrichr website</a>")
+  enrichrTable <- tibble(Comparison=names(all2allMarkers),
+                         "# of differentially expressed genes"=lengths(genesAllPerCluster),
+                         "Enrichr link: all significant genes"=enrichrCalls_all,
+                         "Enrichr link: up-regulated genes"=enrichrCalls_up,
+                         "Enrichr link: down-regulated genes"=enrichrCalls_down,
+                         "List of differentially expressed genes"=text_spec(paste0(names(all2allMarkers), ".tsv"), link=paste0(names(all2allMarkers), ".tsv")))
+  kable(enrichrTable, format="html", escape=FALSE,
+        caption=paste0("GeneSet enrichment: genes with pvalue ", pvalue_all2allMarkers)) %>%
+    kable_styling("striped", full_width = F, position = "left")
+}
+```
+
+### Visualizations of top cluster markers
+
+```{r top cluster markers, fig.width=4, fig.height=3, echo=FALSE, eval=!debug}
+some_markers <- head(arrange(cm, p_val_adj) %>% select(gene) %>% pull(), 100)
+for(i in 1:length(some_markers)){
+  plot(VlnPlot(object = scData, some_markers[i], do.return=TRUE))
+  FeaturePlot(object = scData, features.plot = some_markers[i],
+              cols.use = c("gray", "red"),
+              reduction.use = "tsne", no.legend = FALSE)
+}
+```
+
+### Heatmap of cluster marker genes
+Max `r param$markersToShow` marker genes are shown for each cluster. 
+
+```{r heatmap, fig.width=10, fig.height=param$markersToShow*1.5, echo=FALSE, eval=!debug}
+top10 <- markers %>% group_by(cluster) %>% top_n(param$markersToShow, avg_logFC)
+DoHeatmap(object = scData, genes.use = top10$gene, slim.col.label = TRUE,
+          remove.key=TRUE)
+```
+
+### Expression of selected genes
+
+Each dot is a cell. On the right-hand plot, the color corresponds to the gene expression levels. 
+
+```{r selected markers, fig.width=4, fig.height=3, echo=FALSE, results='asis', eval=!debug}
+if(length(param$markersToCheck) >0){
+  all_m = list()
+  for(i in 1:length(param$markersToCheck)){
+    cat("\n")
+    cat(paste("####", names(param$markersToCheck)[i]))
+    cat("\n")
+    check_markers <- param$markersToCheck[[i]]
+    check_markers <- rownames(scData@data)[toupper(rownames(scData@data)) %in%
+                                             toupper(check_markers)]
+    all_m[[i]] <- check_markers
+    if(length(check_markers) > 0){
+      for(j in 1:length(check_markers)){
+        plot(VlnPlot(object = scData, check_markers[j], do.return=TRUE))
+        FeaturePlot(object = scData, features.plot = check_markers[j],
+                    cols.use = c("gray", "red"),
+                    reduction.use = "tsne", no.legend = FALSE)
+      }
+    }
+    cat("\n")
+  }
+}
+
+```
+
+### Trajectory reconstruction and pseudotime inference
+
+#### Slingshot
+Slingshot is a cluster based ineage reconstruction and pseudotime inference approach.
+Here, we use reduced-dimensional space of tSNE derived above and cell clustering produced by gaussian mixture modeling, instead of cell clustering done by Seurat.
+More details is available at [here](https://www.bioconductor.org/packages/devel/bioc/vignettes/slingshot/inst/doc/slingshot.html).
+
+```{r slingshot compute, echo=FALSE, message=FALSE, eval=param$runPseudoTime & !debug}
+sceSlingshot <- Convert(from = scData, to = "sce")
+
+sceSlingshot <- slingshot(sceSlingshot, clusterLabels = 'ident',
+                          reducedDim = 'TSNE')
+colors <- colorRampPalette(brewer.pal(11,'Spectral')[-6])(100)
+nrPseudoT <- grep("slingPseudotime_\\d+", colnames(colData(sceSlingshot)),
+                  value=TRUE)
+for(i in nrPseudoT){
+  plot(reducedDim(sceSlingshot, type="TSNE"),
+       col=colors[cut(sceSlingshot[[i]], breaks=100)],
+       pch=16, asp = 1, main=i)
+  lines(SlingshotDataSet(sceSlingshot), lwd=2)
+}
+## Trajectory
+if(length(levels(sceSlingshot$ident)) >= 10){
+  colors <- colorRampPalette(brewer.pal(9,'Set1'))(length(levels(sceSlingshot$ident)))
+}else{
+  colors <- brewer.pal(9,'Set1')
+}
+plot(reducedDim(sceSlingshot, type="TSNE"), 
+     col = colors[sceSlingshot$ident], 
+     pch=16, asp = 1, main="Trajectory reconstruction")
+lines(SlingshotDataSet(sceSlingshot), lwd=2, type = 'lineages')
+
+##  smooth curves
+crv1 <- getCurves(SlingshotDataSet(sceSlingshot))
+plot(reducedDim(sceSlingshot, type="TSNE"),
+     col = colors[sceSlingshot$ident], asp = 1, pch = 16,
+     main="Smooth curve")
+lines(crv1, lwd = 3)
+```
+
+#### fastICA
+```{r fastICA plot, echo=FALSE, fig.width=8, fig.height=5, eval=param$runPseudoTime && !debug}
+p <- ggplot(tSNE_data, aes(X, Y)) + 
+  geom_point(shape=21, size=5, colour = "black",
+             aes(fill=pseudotime), alpha=0.7) +
+  scale_fill_gradient(low="yellow", high="blue") +
+  xlab("") + ylab("")
+print(p)
+```
+
+### Interactive explorer
+```{r make shiny data, echo=FALSE}
+scData@scale.data <- NULL
+saveRDS(list(scData=scData, tSNE_data=tSNE_data),
+        file=basename(output$getColumn("Live Report")))
+```
+[Shiny explorer](`r output$getColumn("Live Report")`)
+
+### Parameters
+```{r report parameters, echo=FALSE}
+param[c("minCellsPerGene", "minGenesPerCell", "maxGenesPerCell", "minReadsPerCell", 
+        "maxMitoFraction", "pcs",
+        "pcGenes", "x.low.cutoff", "x.high.cutoff", "y.cutoff", "vars.to.regress",
+        "resolution", "markersToCheck")]
+```
+
+```{r seurat parameters, echo=FALSE}
+PrintFindClustersParams(object = scData)
+```
+
+### SessionInfo
+```{r, echo=FALSE}
+sessionInfo()
+```
