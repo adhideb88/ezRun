@@ -14,23 +14,26 @@ editor_options:
 Started on `r format(Sys.time(), "%Y-%m-%d %H:%M:%S")`
 
 ```{r setup, include=FALSE}
-# input for this report: sce, output
-require(ezRun)
-require(Seurat)
-require(dplyr)
-require(tibble)
-require(kableExtra)
-require(fastICA)
-require(Matrix)
-require(readr)
-require(slingshot)
-require(RColorBrewer)
-require(SummarizedExperiment)
+# input for this report: sce
+library(ezRun)
+library(Seurat)
+library(dplyr)
+library(tibble)
+library(kableExtra)
+library(fastICA)
+library(Matrix)
+library(readr)
+# library(slingshot)
+library(RColorBrewer)
+library(SummarizedExperiment)
+library(tibble)
+library(Rmagic) ## This has to be loaded after setting correct python
+
 ## ----------------------------------------------
 ## debug
 # title:  "`r metadata(sce)$param$name`"
 # sce <- readRDS("/scratch/gtan/dev/SCReports-p2284/AVM_17_08_2018_SCReport/sce.rds")
-# sce <- readRDS("/srv/gstore/projects/p2838/SCReport_32064_2019-01-28--16-12-45/NCC_Trpv5_Tomato_sc_A01_SCReport/sce.rds")
+# sce <- readRDS("/srv/gstore/projects/p2838/SCReport_34239_2019-02-19--21-11-44//NCC_Trpv5_Tomato_sc_A01_SCReport/sce.rds")
 # sce <- readRDS("/scratch/gtan/debug/quickDebug/sce.rds")
 ## end of debug
 debug <- FALSE
@@ -53,11 +56,15 @@ cat(paste0("<SCRIPT language=\"JavaScript\" SRC=\"", basename(jsFile), "\"></SCR
 markers <- FindAllMarkers(object=scData, only.pos=TRUE,
                           return.thresh = pvalue_allMarkers)
 posMarkersFn <- "pos_markers.tsv"
-ezWrite.table(markers, posMarkersFn)
+write_tsv(as_tibble(markers), path=posMarkersFn)
 
 ## Significant markers
-cm <- markers[ ,c("gene","cluster","avg_logFC","p_val_adj")]
-rownames(cm) <- NULL
+if (nrow(markers) >0){
+  cm <- markers[ ,c("gene","cluster","avg_logFC","p_val_adj")]
+  rownames(cm) <- NULL
+} else {
+  cm = markers
+}
 ```
 
 ```{r pos markers all2all, echo=FALSE}
@@ -77,12 +84,17 @@ if(param$all2allMarkers){
 }
 ```
 
-```{r fastICA, echo=FALSE}
-tSNE_data <- as_tibble(scData@dr$tsne@cell.embeddings,
-                       rownames="cells")
-tSNE_data <- rename(tSNE_data, X=`tSNE_1`, Y=`tSNE_2`)
+```{r, echo=FALSE}
+coordinatesData <- scData@dr$tsne@cell.embeddings
+if(!is.null(scData@dr$umap)){
+  ## TODO: remove the condition if umap is always computed
+  coordinatesData <- cbind(coordinatesData, scData@dr$umap@cell.embeddings)
+}
+tSNE_data <- as_tibble(coordinatesData, rownames="cells")
 tSNE_data$cluster <- scData@ident
+```
 
+```{r fastICA, echo=FALSE}
 if(param$runPseudoTime){
   cd <- as.matrix(scData@data)
   set.seed(10)
@@ -91,7 +103,7 @@ if(param$runPseudoTime){
                tol = 0.0001, verbose = FALSE)
   tSNE_data$pseudotime <- a$A[1,]
 }
-tSNEFn <- "tSNE_data.tsv"
+tSNEFn <- "coordinates_data.tsv"
 write_tsv(tSNE_data, path=tSNEFn)
 ```
 
@@ -121,7 +133,7 @@ kable(tibble(Cluster=names(summary(scData@ident)),
 ```{r pc.genes, echo=FALSE}
 if(ezIsSpecified(param$pcGenes)){
   cat("Selected genes for clustering:\n")
-  metadata(sce)[["pc.genes"]]
+  metadata(sce)$param[["pc.genes"]]
   cat("\n")
 }
 ```
@@ -148,6 +160,12 @@ ezWrite.table(geneMeans, geneMeansFn)
 
 [`r tSNEFn`](`r tSNEFn`)
 
+#### UMAP plot (beta)
+
+```{r UMAP, echo=FALSE}
+DimPlot(scData, reduction.use="umap", do.label=TRUE)
+```
+
 ### Control of the cell clustering
 
 ```{r FeaturePlot, echo=FALSE, eval=!debug}
@@ -157,12 +175,16 @@ FeaturePlot(object = scData, features.plot = "nUMI",
             reduction.use = "tsne", no.legend = FALSE)
 FeaturePlot(object = scData, features.plot = "perc_mito",
             reduction.use = "tsne", no.legend = FALSE)
+if(!is.null(scData@meta.data$CellCycle) && 
+   !any(is.na(scData@meta.data$CellCycle))){
+  TSNEPlot(object=scData, group.by="CellCycle", plot.title="Cell cycle phase")
+}
 ```
 
 ### Top cluster markers
 List of all positive cluster markers can be accessed [here](`r posMarkersFn`).
 
-```{r enrichr markers, echo=FALSE, results='asis'}
+```{r enrichr markers, echo=FALSE, results='asis', eval=nrow(markers) >0}
 if(doEnrichr(param)){
   genesPerCluster <- split(markers$gene, markers$cluster)
   jsCall = paste0('enrich({list: "', sapply(genesPerCluster, paste, collapse="\\n"), '", popup: true});')
@@ -177,7 +199,7 @@ if(doEnrichr(param)){
 }
 ```
 
-```{r markers table, echo=FALSE}
+```{r markers table, echo=FALSE, eval=nrow(cm) > 0}
 caption ="Expression differences of cluster marker genes"
 ezInteractiveTableRmd(cm, digits=4, title=caption)
 ```
@@ -192,8 +214,13 @@ if(doEnrichr(param) && param$all2allMarkers){
 ```{r enrichr all2all markers, echo=FALSE, results='asis'}
 if(doEnrichr(param) && param$all2allMarkers){
   for(comparison in names(all2allMarkers)){
-    write_tsv(as_tibble(all2allMarkers[[comparison]], rownames="Gene"),
+    if(nrow(all2allMarkers[[comparison]]) > 0){
+      write_tsv(as_tibble(all2allMarkers[[comparison]], rownames="Gene"),
               path=paste0(comparison, ".tsv"))
+    }else{
+      write_tsv(as_tibble(all2allMarkers[[comparison]]),
+              path=paste0(comparison, ".tsv"))
+    }
   }
   genesAllPerCluster <- lapply(all2allMarkers, rownames)
   genesUpPerCluster <- lapply(all2allMarkers, function(x){rownames(x)[x$avg_logFC > 0]})
@@ -223,7 +250,7 @@ if(doEnrichr(param) && param$all2allMarkers){
 
 ### Visualizations of top cluster markers
 
-```{r top cluster markers, fig.width=4, fig.height=3, echo=FALSE, eval=!debug}
+```{r top cluster markers, fig.width=4, fig.height=3, echo=FALSE, eval=!debug && nrow(cm) > 0}
 some_markers <- head(arrange(cm, p_val_adj) %>% select(gene) %>% pull(), 100)
 for(i in 1:length(some_markers)){
   plot(VlnPlot(object = scData, some_markers[i], do.return=TRUE))
@@ -236,7 +263,7 @@ for(i in 1:length(some_markers)){
 ### Heatmap of cluster marker genes
 Max `r param$markersToShow` marker genes are shown for each cluster. 
 
-```{r heatmap, fig.width=10, fig.height=param$markersToShow*1.5, echo=FALSE, eval=!debug}
+```{r heatmap, fig.width=10, fig.height=param$markersToShow*1.5, echo=FALSE, eval=!debug & nrow(markers) > 0}
 top10 <- markers %>% group_by(cluster) %>% top_n(param$markersToShow, avg_logFC)
 DoHeatmap(object = scData, genes.use = top10$gene, slim.col.label = TRUE,
           remove.key=TRUE)
@@ -273,16 +300,18 @@ if(length(param$markersToCheck) >0){
 
 ### Trajectory reconstruction and pseudotime inference
 
-#### Slingshot
+#### Slingshot (Beta)
 Slingshot is a cluster based ineage reconstruction and pseudotime inference approach.
 Here, we use reduced-dimensional space of tSNE derived above and cell clustering produced by gaussian mixture modeling, instead of cell clustering done by Seurat.
-More details is available at [here](https://www.bioconductor.org/packages/devel/bioc/vignettes/slingshot/inst/doc/slingshot.html).
+More details is available at [here](https://bioconductor.org/packages/devel/bioc/vignettes/slingshot/inst/doc/vignette.html).
 
-```{r slingshot compute, echo=FALSE, message=FALSE, eval=param$runPseudoTime & !debug}
+Slingshot is disabled for now due to an issue of `rgl` package.
+
+```{r slingshot compute, echo=FALSE, message=FALSE, eval=FALSE}
 sceSlingshot <- Convert(from = scData, to = "sce")
 
-sceSlingshot <- slingshot(sceSlingshot, clusterLabels = 'ident',
-                          reducedDim = 'TSNE')
+sceSlingshot <- slingshot::slingshot(sceSlingshot, clusterLabels = 'ident',
+                                     reducedDim = 'TSNE')
 colors <- colorRampPalette(brewer.pal(11,'Spectral')[-6])(100)
 nrPseudoT <- grep("slingPseudotime_\\d+", colnames(colData(sceSlingshot)),
                   value=TRUE)
@@ -293,41 +322,136 @@ for(i in nrPseudoT){
   lines(SlingshotDataSet(sceSlingshot), lwd=2)
 }
 ## Trajectory
-if(length(levels(sceSlingshot$ident)) >= 10){
-  colors <- colorRampPalette(brewer.pal(9,'Set1'))(length(levels(sceSlingshot$ident)))
-}else{
-  colors <- brewer.pal(9,'Set1')
-}
+cell.colorsPalette <- setNames(gg_color_hue(length(levels(sceSlingshot$ident))),
+                               levels(sceSlingshot$ident))
+# cell.colors <- cell.colorsPalette[tSNE_data$cluster]
+# names(cell.colors) <- tSNE_data$cells
+
+# if(length(levels(sceSlingshot$ident)) >= 10){
+#   colors <- colorRampPalette(brewer.pal(9,'Set1'))(length(levels(sceSlingshot$ident)))
+# }else{
+#   colors <- brewer.pal(9,'Set1')
+# }
 plot(reducedDim(sceSlingshot, type="TSNE"), 
-     col = colors[sceSlingshot$ident], 
+     col = cell.colorsPalette[sceSlingshot$ident], 
      pch=16, asp = 1, main="Trajectory reconstruction")
 lines(SlingshotDataSet(sceSlingshot), lwd=2, type = 'lineages')
+legend("topleft", legend=names(cell.colorsPalette),
+       pch=19, col=cell.colorsPalette)
 
 ##  smooth curves
 crv1 <- getCurves(SlingshotDataSet(sceSlingshot))
 plot(reducedDim(sceSlingshot, type="TSNE"),
-     col = colors[sceSlingshot$ident], asp = 1, pch = 16,
+     col = cell.colorsPalette[sceSlingshot$ident], asp = 1, pch = 16,
      main="Smooth curve")
 lines(crv1, lwd = 3)
+legend("topleft", legend=names(cell.colorsPalette),
+       pch=19, col=cell.colorsPalette)
 ```
 
 #### fastICA
 ```{r fastICA plot, echo=FALSE, fig.width=8, fig.height=5, eval=param$runPseudoTime && !debug}
-p <- ggplot(tSNE_data, aes(X, Y)) + 
+p <- ggplot(tSNE_data, aes(tSNE_1, tSNE_2)) + 
   geom_point(shape=21, size=5, colour = "black",
              aes(fill=pseudotime), alpha=0.7) +
-  scale_fill_gradient(low="yellow", high="blue") +
-  xlab("") + ylab("")
+  scale_fill_gradient(low="yellow", high="blue")
 print(p)
 ```
+
 
 ### Interactive explorer
 ```{r make shiny data, echo=FALSE}
 scData@scale.data <- NULL
 saveRDS(list(scData=scData, tSNE_data=tSNE_data),
         file=basename(output$getColumn("Live Report")))
+sce_iSEE = as.SingleCellExperiment(scData)
+saveRDS(sce_iSEE, "sce_iSEE.rds")
 ```
 [Shiny explorer](`r output$getColumn("Live Report")`)
+
+<br>
+
+[iSEE explorer](`r paste0("http://fgcz-shiny.uzh.ch/fgcz_iSEE/?data=",output$getColumn("Report"),"/sce_iSEE.rds")`)
+
+
+### MAGIC
+Markov Affinity-based Graph Imputation of Cells (MAGIC) is an algorithm for 
+denoising high-dimensional data most commonly applied to single-cell 
+RNA sequencing data. 
+MAGIC learns the manifold data, using the resultant graph to smooth the features 
+and restore the structure of the data.
+
+See more details at https://github.com/KrishnaswamyLab/MAGIC.
+
+```{r magic, echo=FALSE, results='hide'}
+magic_data <- magic(Matrix::t(scData@data), genes="all_genes",
+                    t="auto", seed=10)
+magicDataFn <- "magic_data.tsv"
+write_tsv(as_tibble(t(as.data.frame(magic_data)), rownames="gene_name"),
+          path=magicDataFn)
+magicDataFn <- R.utils::gzip(magicDataFn)
+```
+
+Smoothed data is available at [`r magicDataFn`](`r magicDataFn`).
+
+After loading `r magicDataFn` into R, 
+to visualise the gene-gene relationships after MAGIC,
+use the code below to show genes of interest, 
+for example, "Pvalb", "Slc12a3" and "Aqp2" here.
+
+```{r magic plot, echo=TRUE, eval=FALSE}
+ggplot(magic_data) +
+  geom_point(aes(Pvalb, Slc12a3, color=Aqp2)) +
+  scale_color_viridis(option="B")
+```
+
+```{r, echo=FALSE}
+organism = NULL
+if(startsWith(param$refBuild, "Homo_sapiens/Ensembl")){
+    organism <- "Human"
+} else if(startsWith(param$refBuild, "Mus_musculus/Ensembl")){
+  organism <- "Mouse"
+}
+```
+
+```{r, echo=FALSE}
+sink("sessionInfo.txt")
+sessionInfo()
+sink()
+```
+
+```{r singler, eval= !is.null(organism), results='hide', echo=FALSE, message=FALSE}
+unloadNamespace("SingleR") #be sure SingleR is unloaded
+#detach(package:SingleR)
+unloadNamespace("Seurat") #unload the Seurat v2
+#detach(package:Seurat)
+library("Seurat", lib="/home/daymegr/myRpackages") #and load the version 3
+scData_v3 = UpdateSeuratObject(scData)
+
+library(SingleR) #only load SingleR after loading the newest Seurat version
+singler = CreateSinglerObject(as.matrix(GetAssayData(scData_v3, slot = "counts")), annot = NULL, project.name = "", min.genes = 0, technology = "10X", species = organism, citation = "", normalize.gene.length = F, variable.genes = "de", fine.tune = T, do.signatures = F, clusters=scData_v3@active.ident, do.main.types = T, reduce.file.size=T,temp.dir = NULL, numCores = param$cores)
+                              
+singler$seurat = scData_v3
+singler$meta.data$orig.ident = scData_v3@meta.data$Batch
+singler$meta.data$xy = scData_v3@reductions$tsne@cell.embeddings # the tSNE coordinates
+singler$meta.data$clusters = Idents(scData_v3)
+
+#convert the file to use it in the interactive browser
+singler.browser = convertSingleR2Browser(singler)
+saveRDS(singler.browser, 'singler.browser.rds')
+```
+
+```{r singlerbrowser, eval= !is.null(organism), results='asis', echo=FALSE}
+cat("### Cell populations")
+cat("\n")
+cat("\n")
+cat("In order to identify cell populations we used SingleR [ Aran, Looney, Liu et al. Reference-based analysis of lung single-cell sequencing reveals a transitional profibrotic macrophage. Nature Immunology (2019)], a computational method for unbiased cell type recognition of scRNA-seq. SingleR leverages reference transcriptomic datasets of pure cell types to infer the cell of origin of each of the single cells independently. \n The SingleR browser allows to visualize the cell populations identified in different and easier ways.")
+cat("\n")
+cat("\n")
+
+cat(paste0("[SingleR browser](http://fgcz-shiny.uzh.ch/fgcz_SingleRBrowser_app/?data=" , output$getColumn("Report"), "/singler.browser.rds)"))
+```
+
 
 ### Parameters
 ```{r report parameters, echo=FALSE}
@@ -338,7 +462,7 @@ param[c("minCellsPerGene", "minGenesPerCell", "maxGenesPerCell", "minReadsPerCel
 ```
 
 ```{r seurat parameters, echo=FALSE}
-PrintFindClustersParams(object = scData)
+Seurat2::PrintFindClustersParams(object = scData)
 ```
 
 ### SessionInfo

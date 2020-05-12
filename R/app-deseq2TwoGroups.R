@@ -6,12 +6,9 @@
 # www.fgcz.ch
 
 
-ezMethodDeseq2 = function(input=NA, output=NA, param=NA, htmlFile="00index.html"){
+ezMethodDeseq2 = function(input=NA, output=NA, param=NA){
   if (ezIsSpecified(param$samples)){
     input = input$subset(param$samples)
-  }
-  if (!is.null(param$markOutliers) && param$markOutliers){
-    stop("DESeq2 does not support marking outliers because marked outliers would still be used in dispersion estimates")
   }
   cwd <- getwd()
   setwdNew(basename(output$getColumn("Report")))
@@ -26,23 +23,17 @@ ezMethodDeseq2 = function(input=NA, output=NA, param=NA, htmlFile="00index.html"
   
   rawData = loadCountDataset(input, param)
   if (isError(rawData)){
-    writeErrorReport(htmlFile, param=param, error=rawData$error)
+    writeErrorReport("00index.html", param=param, error=rawData$error)
     return("Error")
   }
   
   deResult = twoGroupCountComparison(rawData)
   if (isError(deResult)){
-    writeErrorReport(htmlFile, param=param, error=deResult$error)
+    writeErrorReport("00index.html", param=param, error=deResult$error)
     return("Error")
   }
   
-  ## Copy the style files and templates
-  styleFiles <- file.path(system.file("templates", package="ezRun"),
-                          c("fgcz.css", "twoGroups.Rmd",
-                            "fgcz_header.html", "banner.png"))
-  file.copy(from=styleFiles, to=".", overwrite=TRUE)
-  rmarkdown::render(input="twoGroups.Rmd", envir = new.env(),
-                    output_dir=".", output_file=htmlFile, quiet=TRUE)
+  makeRmdReport(output=output, param=param, deResult=deResult, rmdFile="twoGroups.Rmd")
   return("Success")
 }
 
@@ -60,6 +51,7 @@ EzAppDeseq2 <-
                   name <<- "EzAppDeseq2"
                   appDefaults <<- rbind(testMethod=ezFrame(Type="character",  DefaultValue="deseq2",  Description="which test method in DESeq to use: deseq2"),
                                         runGfold=ezFrame(Type="logical", DefaultValue=FALSE, Description="no need to compute moderated ratios; deseq2 does this already"),
+                                        normMethod=ezFrame(Type="character", DefaultValue="DESeq2_MedianRatio", Description="Deseq2's default norm method; this is actually not read"),
                                         useRefGroupAsBaseline=ezFrame(Type="logical", DefaultValue=FALSE, Description="should the log-ratios be centered at the reference samples"),
                                         onlyCompGroupsHeatmap=ezFrame(Type="logical", DefaultValue=FALSE, Description="Only show the samples from comparison groups in heatmap")
                                         )

@@ -11,7 +11,7 @@ ezMethodTophat = function(input=NA, output=NA, param=NA){
   ref = getBowtie2Reference(param)
   gtf = param$ezRef["refFeatureFile"]
   bamFile = output$getColumn("BAM")
-  trimmedInput = ezMethodTrim(input = input, param = param)
+  trimmedInput = ezMethodFastpTrim(input = input, param = param)
   refBase = sub(".gtf$", "_BOWTIE2Index/transcripts", gtf)
   lockFile = file.path(dirname(refBase), "lock")
   i = 0
@@ -52,7 +52,7 @@ ezMethodTophat = function(input=NA, output=NA, param=NA){
   ## check the strandedness
   bedFile = getReferenceFeaturesBed(param)
   ezSystem(paste("infer_experiment.py", "-r", bedFile, "-i", basename(bamFile), "-s 1000000"))
-
+  
   ## write an igv link
   if (param$writeIgvSessionLink){
     writeIgvSession(genome = getIgvGenome(param), refBuild=param$ezRef["refBuild"], file=basename(output$getColumn("IGV Session")),
@@ -67,7 +67,7 @@ ezMethodTophat = function(input=NA, output=NA, param=NA){
 ##' @templateVar method ezMethodTophat(input=NA, output=NA, param=NA)
 ##' @description Use this reference class to run 
 ##' @seealso \code{\link{getBowtie2Reference}}
-##' @seealso \code{\link{ezMethodTrim}}
+##' @seealso \code{\link{ezMethodFastpTrim}}
 EzAppTophat <-
   setRefClass("EzAppTophat",
               contains = "EzApp",
@@ -86,7 +86,7 @@ ezMethodBowtie2 = function(input=NA, output=NA, param=NA){
   ref = getBowtie2Reference(param)
   bamFile = output$getColumn("BAM")
   sampleName = sub('.bam','',basename(bamFile))
-  trimmedInput = ezMethodTrim(input = input, param = param)
+  trimmedInput = ezMethodFastpTrim(input = input, param = param)
   defOpt = paste("-p", param$cores)
   readGroupOpt = paste0("--rg-id ", sampleName," --rg SM:", sampleName,
                         " --rg LB:RGLB_", sampleName,
@@ -105,7 +105,7 @@ ezMethodBowtie2 = function(input=NA, output=NA, param=NA){
     ezSortIndexBam("bowtie.bam", "sorted.bam", ram=param$ram, removeBam=TRUE,
                    cores=param$cores)
     dupBam(inBam="sorted.bam", outBam=basename(bamFile),
-           operation="mark", cores=param$cores)
+           operation="mark", program="picard", cores=param$cores)
     file.remove("sorted.bam")
   }else{
     ezSortIndexBam("bowtie.bam", basename(bamFile), ram=param$ram, 
@@ -178,7 +178,7 @@ getBowtie2Reference = function(param){
 ##' @templateVar method ezMethodBowtie2(input=NA, output=NA, param=NA)
 ##' @description Use this reference class to run 
 ##' @seealso \code{\link{getBowtie2Reference}}
-##' @seealso \code{\link{ezMethodTrim}}
+##' @seealso \code{\link{ezMethodFastpTrim}}
 EzAppBowtie2 <-
   setRefClass("EzAppBowtie2",
               contains = "EzApp",
@@ -198,10 +198,11 @@ ezMethodBowtie = function(input=NA, output=NA, param=NA){
     
   ref = getBowtieReference(param)
   bamFile = output$getColumn("BAM")  
-  trimmedInput = ezMethodTrim(input = input, param = param)
+  trimmedInput = ezMethodFastpTrim(input = input, param = param)
   defOpt = paste("--chunkmbs 256", "--sam", "-p", param$cores)
   cmd = paste("bowtie", param$cmdOptions, defOpt, 
-              ref, trimmedInput$getColumn("Read1"), if(param$paired) trimmedInput$getColumn("Read2"),
+              ref, if(param$paired) "-1", trimmedInput$getColumn("Read1"),
+              if(param$paired) paste("-2", trimmedInput$getColumn("Read2")),
               "2> bowtie.log", "|", "samtools", "view -S -b -", " > bowtie.bam")
   ezSystem(cmd)
   ezSortIndexBam("bowtie.bam", basename(bamFile), ram=param$ram, removeBam=TRUE,
@@ -270,7 +271,7 @@ getBowtieReference = function(param){
 ##' @templateVar method ezMethodBowtie(input=NA, output=NA, param=NA)
 ##' @description Use this reference class to run 
 ##' @seealso \code{\link{getBowtieReference}}
-##' @seealso \code{\link{ezMethodTrim}}
+##' @seealso \code{\link{ezMethodFastpTrim}}
 EzAppBowtie <-
   setRefClass("EzAppBowtie",
               contains = "EzApp",
@@ -301,12 +302,14 @@ ezMethodSTAR = function(input=NA, output=NA, param=NA){
       }
     }
   }
-  
-  trimmedInput <- ezMethodTrim(input = input, param = param)
+
+  trimmedInput <- ezMethodFastpTrim(input = input, param = param)
   
   if (!grepl("outSAMattributes", param$cmdOptions)){
     param$cmdOptions = paste(param$cmdOptions, "--outSAMattributes All")
   }
+  # param$cmdOptions = paste(param$cmdOptions, "--genomeLoad LoadAndRemove")
+  
   cmd = paste("STAR", " --genomeDir", refDir,  "--sjdbOverhang 150", 
               "--readFilesIn", trimmedInput$getColumn("Read1"), 
               if(param$paired) trimmedInput$getColumn("Read2"),
@@ -314,25 +317,26 @@ ezMethodSTAR = function(input=NA, output=NA, param=NA){
               "--runThreadN", param$cores, param$cmdOptions, 
               "--outStd BAM_Unsorted --outSAMtype BAM Unsorted",
               "--outSAMattrRGline", paste0("ID:", trimmedInput$getNames()), paste0("SM:", trimmedInput$getNames()),
-              ">  Aligned.out.bam")## writes the output file Aligned.out.bam
+              if( grepl('.gz',trimmedInput$getColumn("Read1")) ) "--readFilesCommand zcat",
+              ">  Aligned.out.bam") ## writes the output file Aligned.out.bam
   ##"|", "samtools", "view -S -b -", " >", "Aligned.out.bam")
   ezSystem(cmd)
   
   nSortThreads = min(param$cores, 8)
   ## if the index is loaded in shared memory we have to use only 10% of the scheduled RAM
-  if (grepl("--genomeLoad LoadAndKeep", param$cmdOptions)){
+  if (grepl("--genomeLoad Load", param$cmdOptions)){
     sortRam = param$ram / 10
   } else {
     sortRam = param$ram
   }
-
+  
   file.rename('Log.final.out', to = basename(output$getColumn("STARLog")))
   
   if (!is.null(param$markDuplicates) && param$markDuplicates){
     ezSortIndexBam("Aligned.out.bam", "sorted.bam", ram=sortRam, removeBam=TRUE, 
                    cores=nSortThreads)
     dupBam(inBam="sorted.bam", outBam=basename(bamFile),
-           operation="mark", cores=param$cores)
+           operation="mark", program="picard", cores=param$cores)
     file.remove("sorted.bam")
   } else {
     ezSortIndexBam("Aligned.out.bam", basename(bamFile), ram=sortRam, 
@@ -344,14 +348,10 @@ ezMethodSTAR = function(input=NA, output=NA, param=NA){
     ezSystem(paste("mv Chimeric.out.junction", 
                    basename(output$getColumn("Chimerics"))))
   }
-
+  
   ## check the strandedness
-  if (!is.null(param$checkStrandness) && param$checkStrandness){
-    cat(Sys.getenv("PATH"), "\n")
-    bedFile = getReferenceFeaturesBed(param)
-    ezSystem(paste("infer_experiment.py", "-r", bedFile,
-                   "-i", basename(bamFile), "-s 1000000"))
-  }
+  bedFile = getReferenceFeaturesBed(param)
+  ezSystem(paste("infer_experiment.py", "-r", bedFile, "-i", basename(bamFile), "-s 1000000"))
   
   ## write an igv link
   if (param$writeIgvSessionLink){ 
@@ -420,7 +420,7 @@ getSTARReference = function(param){
   }
 
   genomeLength = sum(fai$LENGTH)
-  indexNBasesOpt = paste("--genomeSAindexNbases", min(14, floor(log2(genomeLength)/2 - 1)))
+  indexNBasesOpt = paste("--genomeSAindexNbases", min(13, floor(log2(genomeLength)/2 - 1)))
   
   job = ezJobStart("STAR genome build")
   if (ezIsSpecified(param$spikeInSet)){
@@ -432,12 +432,12 @@ getSTARReference = function(param){
     cmd = paste("STAR", "--runMode genomeGenerate --genomeDir", refDir, binOpt, indexNBasesOpt,
                 "--limitGenomeGenerateRAM", format(param$ram * 1e9, scientific=FALSE),
                 "--genomeFastaFiles", param$ezRef["refFastaFile"], spikeInFasta,
-                "--sjdbGTFfile", gtfFile, "--sjdbOverhang 150", "--runThreadN", param$cores)
+                "--sjdbGTFfile", gtfFile, "--sjdbOverhang 150", "--runThreadN", param$cores, '--genomeSAsparseD 2')
   } else {
     cmd = paste("STAR", "--runMode genomeGenerate --genomeDir", refDir, binOpt, indexNBasesOpt,
                 "--limitGenomeGenerateRAM", format(param$ram * 1e9, scientific=FALSE),
                 "--genomeFastaFiles", param$ezRef["refFastaFile"], 
-                "--sjdbGTFfile", param$ezRef["refFeatureFile"], "--sjdbOverhang 150", "--runThreadN", param$cores)
+                "--sjdbGTFfile", param$ezRef["refFeatureFile"], "--sjdbOverhang 150", "--runThreadN", param$cores, '--genomeSAsparseD 2')
     
   }
   ezSystem(cmd)
@@ -451,7 +451,7 @@ getSTARReference = function(param){
 ##' @templateVar method ezMethodSTAR(input=NA, output=NA, param=NA)
 ##' @description Use this reference class to run 
 ##' @seealso \code{\link{getSTARReference}}
-##' @seealso \code{\link{ezMethodTrim}}
+##' @seealso \code{\link{ezMethodFastpTrim}}
 EzAppSTAR <- 
   setRefClass("EzAppSTAR",
               contains = "EzApp",
@@ -464,7 +464,7 @@ EzAppSTAR <-
                   appDefaults <<- rbind(getJunctions=ezFrame(Type="logical",  DefaultValue="FALSE",	Description="should junctions be returned"),
                                         writeIgvSessionLink=ezFrame(Type="logical", DefaultValue="TRUE", Description="should an IGV link be generated"),
                                         markDuplicates=ezFrame(Type="logical", DefaultValue="TRUE", Description="should duplicates be marked with picard"),
-                                        checkStrandness=ezFrame(Type="logical", DefaultValue="TRUE", Description="should strandness be checked"),
+                                        checkStrandness=ezFrame(Type="logical", DefaultValue="FALSE", Description="should strandness be checked"),
                                         randomSleep=ezFrame(Type="logical",  DefaultValue="FALSE",  Description="should there be a random sleep to avoid to much network traffic when loading the STAR index"),
                                         twopassMode=ezFrame(Type="logical", DefaultValue="TRUE", Description="1-pass mapping or basic 2-pass mapping")
                                         )
@@ -474,6 +474,59 @@ EzAppSTAR <-
 
 ezMethodBWA = function(input=NA, output=NA, param=NA){
   
+  refIdx = getBWAReference(param)
+  bamFile = output$getColumn("BAM")
+  trimmedInput = ezMethodFastpTrim(input = input, param = param)
+  if (param$algorithm == "aln"){
+    cmd = paste("bwa", param$algorithm, param$cmdOptions, "-t", param$cores,
+                refIdx, trimmedInput$getColumn("Read1"), ">", "read1.sai", "2> bwa.log")
+    ezSystem(cmd)
+    if (param$paired){
+      cmd = paste("bwa", param$algorithm, param$cmdOptions, "-t", param$cores,
+                  refIdx, trimmedInput$getColumn("Read2"), ">", "read2.sai", "2> bwa.log")
+      ezSystem(cmd)
+      cmd = paste("bwa", "sampe", refIdx, "read1.sai", "read2.sai", 
+                  trimmedInput$getColumn("Read1"), trimmedInput$getColumn("Read2"),
+                  "2> bwa.log", "|",
+                  "samtools", "view -S -b -", " > aligned.bam")
+      ezSystem(cmd)
+    } else {
+      cmd = paste("bwa", "samse", refIdx, "read1.sai", 
+                  trimmedInput$getColumn("Read1"), "2> bwa.log", "|",
+                  "samtools", "view -S -b -", " > aligned.bam")
+      ezSystem(cmd)
+    }
+  } else {
+    if(param$algorithm == "bwasw" && param$paired){
+      stop("paired is not supported for algorithm bwasw")
+    }
+    cmd = paste("bwa", param$algorithm, param$cmdOptions, "-t", param$cores,
+                refIdx, trimmedInput$getColumn("Read1"),
+                if(param$paired) trimmedInput$getColumn("Read2"),
+                "2> bwa.log", "|", "samtools", "view -S -b -", " > aligned.bam")
+    ezSystem(cmd)
+  }
+  file.remove(trimmedInput$getColumn("Read1"))
+  if(param$paired)
+    file.remove(trimmedInput$getColumn("Read2"))
+  
+  ezSortIndexBam("aligned.bam", basename(bamFile), ram=param$ram, removeBam=TRUE,
+                 cores=param$cores)
+  
+  ## write an igv link
+  if (param$writeIgvSessionLink){ 
+    writeIgvSession(genome = getIgvGenome(param), refBuild=param$ezRef["refBuild"], 
+                    file=basename(output$getColumn("IGV Session")),
+                    bamUrls = paste(PROJECT_BASE_URL, bamFile, sep="/") )
+    writeIgvJnlp(jnlpFile=basename(output$getColumn("IGV Starter")),
+                 projectId = sub("\\/.*", "", bamFile),
+                 sessionUrl = paste(PROJECT_BASE_URL, output$getColumn("IGV Session"), sep="/"))
+  }
+  return("Success")
+}
+
+ezMethodBWATrimmomatic = function(input=NA, output=NA, param=NA){ # Perform BWA using fastp for read pre-processing
+
   refIdx = getBWAReference(param)
   bamFile = output$getColumn("BAM")
   trimmedInput = ezMethodTrim(input = input, param = param)
@@ -569,7 +622,7 @@ getBWAReference = function(param){
 ##' @templateVar method ezMethodBWA(input=NA, output=NA, param=NA)
 ##' @description Use this reference class to run 
 ##' @seealso \code{\link{getBWAReference}}
-##' @seealso \code{\link{ezMethodTrim}}
+##' @seealso \code{\link{ezMethodFastpTrim}}
 EzAppBWA <- 
   setRefClass("EzAppBWA",
               contains = "EzApp",
@@ -585,11 +638,26 @@ EzAppBWA <-
               )
   )
 
+EzAppBWATrimmomatic <- 
+  setRefClass("EzAppBWATrimmomatic",
+              contains = "EzApp",
+              methods = list(
+                initialize = function()
+                {
+                  "Initializes the application using its specific defaults."
+                  runMethod <<- ezMethodBWATrimmomatic
+                  name <<- "EzAppBWATrimmomatic"
+                  appDefaults <<- rbind(algorithm=ezFrame(Type="character",  DefaultValue="mem",  Description="bwa's alignment algorithm. One of aln, bwasw, mem."),
+                                        writeIgvSessionLink=ezFrame(Type="logical", DefaultValue="TRUE", Description="should an IGV link be generated"))
+                }
+              )
+  )
+
 ezMethodBismark = function(input=NA, output=NA, param=NA){
   ##TODO: create reference if not existing
   ref = dirname(param$ezRef@refFastaFile)
   bamFile = output$getColumn("BAM")
-  trimmedInput = ezMethodTrim(input = input, param = param)
+  trimmedInput = ezMethodFastpTrim(input = input, param = param)
   defOpt = paste("-p", max(2, param$cores/2))  
   if(param$paired){
    cmd = paste("bismark", param$cmdOptions ,
@@ -611,7 +679,7 @@ ezMethodBismark = function(input=NA, output=NA, param=NA){
   if(param$deduplicate){
     cmd = paste("deduplicate_bismark", ifelse(param$paired,"-p","-s"), bamFileNameBismark)
     ezSystem(cmd)
-    bamFileNameBismark = list.files('.',pattern='deduplicated.sam$')
+    bamFileNameBismark = list.files('.',pattern='deduplicated.bam$')
     deduplicationReportFile = list.files('.',pattern='deduplication_report.txt$')
     ezSystem(paste("cat ",deduplicationReportFile,">>",reportFile))
   }
@@ -623,11 +691,17 @@ ezMethodBismark = function(input=NA, output=NA, param=NA){
   ezSortIndexBam("bismark.bam", basename(bamFile), ram=param$ram, removeBam=TRUE,
                  cores=param$cores)
   mBiasImages = list.files('.',pattern='png$')
-  for (i in 1:length(mBiasImages)){
-    ezSystem(paste('mv ', mBiasImages[i], paste0(names(bamFile),'.M-bias_R',i,'.png')))  
+  if((length(mBiasImages)) > 0){
+    for (i in 1:length(mBiasImages)){
+      ezSystem(paste('mv ', mBiasImages[i], paste0(names(bamFile),'.M-bias_R',i,'.png')))  
+    }
+  } else {
+    ezSystem(paste('touch', paste0(names(bamFile),'.M-bias_R1.png')))
+    ezSystem(paste('touch', paste0(names(bamFile),'.M-bias_R2.png')))
   }
+  
   CpGFile = list.files('.',pattern='^CpG.*txt$')
-  cmd = paste("bismark2bedGraph", CpGFile, "-o", names(bamFile))
+  cmd = paste("bismark2bedGraph --scaffolds", CpGFile, "-o", names(bamFile))
   ezSystem(cmd)
   ezSystem(paste('mv ', CpGFile, paste0(names(bamFile),'.CpG_context.txt')))
   

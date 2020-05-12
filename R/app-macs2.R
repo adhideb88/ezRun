@@ -31,14 +31,17 @@ ezMethodMacs2 = function(input=NA, output=NA, param=NA){
       opt <- paste(opt, "--extsize 147")
     }
     bamFile <- input$getFullPaths("BAM")
-    outBam <- basename(output$getColumn("BAM"))
-    
-    dupBam(inBam=bamFile, outBam=outBam, operation="remove",
+    if(param$markDuplicates){
+      outBam <- basename(output$getColumn("BAM"))
+      dupBam(inBam=bamFile, outBam=outBam, operation="remove",
            cores=param$cores)
+    } else {
+      outBam <- bamFile
+    }
     
     if (isTRUE(param$useControl)){
       if(!any(grepl("Control", input$colNames, ignore.case = TRUE)))
-        stop("Control is not available when paramter useControl is true.")
+        stop("The parameter 'useControl' is 'true' but no column named 'Control [File]' is available.")
       
       cmd = paste("macs2", "callpeak -t", outBam,
                   "-c", input$getFullPaths("Control"),

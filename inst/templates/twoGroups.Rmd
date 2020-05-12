@@ -4,17 +4,25 @@ author: "Functional Genomics Center Zurich"
 output: 
   html_document:
     self_contained: false
+    lib_dir: rmarkdownLib
     includes:
       in_header: fgcz_header.html
     css: fgcz.css
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-## This report requires objects: output, deResult, param
+output = readRDS("output.rds")
+deResult = readRDS("deResult.rds")
+param =readRDS("param.rds")
 
 ## debug
 #title: "`r paste('Two groups analysis:', param$comparison)`"
+#load("/srv/gstore/projects/p2378/EdgeR_33526_MEP--over--AVG_2019-01-30--09-29-18/MEP--over--AVG/result-MEP--over--AVG-exisqviqjjth-EzResult.RData")
+#deResult = EzResult(param=param, rawData=rawData, se=se)
+#param <- deResult$param
 ## end of debug
 debug <- FALSE
 
@@ -32,6 +40,9 @@ param <- metadata(se)$param
 #param$doPrecomputeEnrichr <- FALSE
 seqAnno <- data.frame(rowData(se), row.names=rownames(se),
                       check.names = FALSE, stringsAsFactors=FALSE)
+
+dataset <- data.frame(colData(se), check.names=FALSE, stringsAsFactors=FALSE)
+design = ezDesignFromDataset(dataset, param)
 ## In some cases, such as p2710, there are millions of features, then we have to adjust some analyses below.
 hasMassiveFeats <- nrow(seqAnno) >= 200e3
 ```
@@ -63,7 +74,7 @@ knitr::kable(as.data.frame(settings), format="html",
 ```
 
 #### Number of significants by p-value and fold-change
-```{r gene table, echo=FALSE}
+```{r gene table, echo=FALSE, message=FALSE}
 knitr::kable(makeSignificantCounts(se), row.names=TRUE,  format="html") %>%
   kable_styling(bootstrap_options = "striped", full_width = F, 
                 position = "left")
@@ -76,7 +87,7 @@ conversion of the symbols to dates). See
 
 (https://www.genenames.org/help/importing-gene-symbol-data-into-excel-correctly)
 
-```{r result live report, echo=FALSE, message=FALSE, eval=TRUE}
+```{r result live report, echo=FALSE, message=FALSE, eval=TRUE, warning=FALSE, cache=FALSE}
 resultFile <- makeResultFile(param, se)
 
 ezWrite.table(colData(se)[, "sf", drop=FALSE],
@@ -85,8 +96,6 @@ ezWrite.table(colData(se)[, "sf", drop=FALSE],
 liveReportLink = output$getColumn("Live Report")
 
 deResult$saveToFile(basename(output$getColumn("Live Report")))
-
-makeWebgestaltFiles(param, resultFile$resultFile)
 ```
 
 [`r resultFile$resultZip`](`r resultFile$resultZip`)
@@ -122,7 +131,7 @@ knitr::kable(as.data.frame(settings), format="html",
                   position = "left")
 ```
 
-Subsequent plots highlight significant genes in <span style="color:red">red</span>.
+Subsequent plots highlight significant genes in <span style="color:#A6CEE3FF">blue</span>.
 
 [Interactive table of significant genes](`r resultFile$resultHtml`)
 
@@ -162,13 +171,13 @@ if(isTRUE(isTwoGroup)){
 ```
 
 ```{r scatter comparison link, echo=FALSE, results='asis', eval=!debug}
-if (isTRUE(isTwoGroup)){
-  if(!isTRUE(hasMassiveFeats)){
-    cat(paste0("[Plot in pdf](", scatterPdf, ")"), "\n")
-    cat("\n")
-    cat(paste0("[Interactive comparison plot (64-bit Chrome or Safari is recommended for best performance!)](", scatterHtml, ")"), "\n")
-  }
-}
+# if (isTRUE(isTwoGroup)){
+#   if(!isTRUE(hasMassiveFeats)){
+#     cat(paste0("[Plot in pdf](", scatterPdf, ")"), "\n")
+#     cat("\n")
+#     cat(paste0("[Interactive comparison plot (64-bit Chrome or Safari is recommended for best performance!)](", scatterHtml, ")"), "\n")
+#   }
+# }
 ```
 
 ```{r volcano p-value, echo=FALSE, message=FALSE, warning=FALSE, fig.width=9, fig.width=7, eval=!debug}
@@ -201,13 +210,13 @@ if (isTRUE(isTwoGroup)){
 ```
 
 ```{r volcano p-value link , echo=FALSE, results='asis', eval=!debug}
-if (isTRUE(isTwoGroup)){
-  if(!isTRUE(hasMassiveFeats)){
-    cat(paste0("[Plot in pdf](", volcanoPdf, ")"), "\n")
-    cat("\n")
-    cat(paste0("[Interactive comparison plot (64-bit Chrome or Safari is recommended for best performance!)](", volcanoHtml, ")"), "\n")
-  }
-}
+# if (isTRUE(isTwoGroup)){
+#   if(!isTRUE(hasMassiveFeats)){
+#     cat(paste0("[Plot in pdf](", volcanoPdf, ")"), "\n")
+#     cat("\n")
+#     cat(paste0("[Interactive comparison plot (64-bit Chrome or Safari is recommended for best performance!)](", volcanoHtml, ")"), "\n")
+#   }
+# }
 ```
 
 ```{r scatter all pairs, echo=FALSE, results='asis', message=FALSE, eval=!debug}
@@ -257,13 +266,13 @@ if(isTRUE(isTwoGroup)){
 ```
 
 ```{r volcano FDR link, echo=FALSE, results='asis', eval=!debug}
-if(isTRUE(isTwoGroup)){
-  if(!isTRUE(hasMassiveFeats)){
-    cat(paste0("[Plot in pdf](", volcanoFDRPdf, ")"), "\n")
-    cat("\n")
-    cat(paste0("[Interactive comparison plot (64-bit Chrome or Safari is recommended for best performance!)](", volcanoFDRHtml, ")"), "\n")
-  }
-}
+# if(isTRUE(isTwoGroup)){
+#   if(!isTRUE(hasMassiveFeats)){
+#     cat(paste0("[Plot in pdf](", volcanoFDRPdf, ")"), "\n")
+#     cat("\n")
+#     cat(paste0("[Interactive comparison plot (64-bit Chrome or Safari is recommended for best performance!)](", volcanoFDRHtml, ")"), "\n")
+#   }
+# }
 ```
 
 ```{r pvalue hist, echo=FALSE, results='asis', eval=!debug}
@@ -281,14 +290,10 @@ plotCmd = expression({
     axis(1, at=at*ncol(xx), labels = at)
     legend("top", c("used", "not expressed"), col=c("blue", "darkorange"), pch=20, cex=1)
 })
-#includeHtml <- ezImageFileLink(plotCmd, 
-#                               file=paste0(param$comparison, "-pValueHist.png"), 
-#                               width=800)
-#cat(includeHtml)
 eval(plotCmd)
 ```
 
-```{r intra group, echo=FALSE, results='asis', eval=!debug}
+```{r intra group, echo=FALSE, results='asis', eval=!debug, message=FALSE}
 theRange = 2^(range(logSignal, na.rm=TRUE))
 x <- logSignal
 if(ncol(x) <= 100){
@@ -394,6 +399,7 @@ if (sum(use) > param$minGenesForClustering){
     columnsToSubset <- param$grouping %in% c(param$refGroup, param$sampleGroup)
     param$grouping <- param$grouping[columnsToSubset]
     xCentered <- xCentered[ , columnsToSubset]
+    design <- design[columnsToSubset,,drop=FALSE]
   }
   if (!is.null(param$useRefGroupAsBaseline) && param$useRefGroupAsBaseline){
     xCentered = xCentered - rowMeans(xCentered[ , param$grouping == param$refGroup])
@@ -405,30 +411,29 @@ if (sum(use) > param$minGenesForClustering){
   }
   xCentered = xCentered[, order(param$grouping)]
   sampleColors = getSampleColors(param$grouping)[order(param$grouping)]
+  
   clusterPng = "cluster-heatmap.png"
   clusterPdf = "cluster-heatmap.pdf"
-  clusterColors = c("red", "yellow", "orange", "green", "blue", "cyan")
-  clusterResult = clusterResults(xCentered, nClusters=6, clusterColors=clusterColors)
+  
+  nClusters=6
+  clusterColors = hcl.colors(nClusters, palette = "Spectral")
+  clusterResult = clusterResults(xCentered, nClusters=nClusters, clusterColors=clusterColors)
+  
+  design = design[,c(param$groupingName,setdiff(colnames(design),param$groupingName)), drop=FALSE]
+  
   plotCmd = expression({
-    clusterHeatmap(xCentered, param, clusterResult, file=NULL,
-                   colColors=sampleColors, 
-                   lim=c(-param$logColorRange, param$logColorRange))
+    clusterPheatmap(xCentered, design, param, clusterColors,
+                      lim=c(-param$logColorRange, param$logColorRange),
+                      doClusterColumns=FALSE, sampleColors=sampleColors)
   })
   eval(plotCmd)
-  #clusterLink = ezImageFileLink(plotCmd, file=clusterPng, 
-  #                              width=max(800, 400 + 10 * ncol(xCentered)), 
-  #                              height=1000) # HEATMAP
-  #cat(clusterLink)
-  pdf(clusterPdf, width=max(8,4+0.1*ncol(se)), height=10)
-  eval(plotCmd)
-  dev.off()
-  
+
   if (doGo(param, seqAnno)){
     clusterResult = goClusterResults(xCentered, param, clusterResult, seqAnno=seqAnno, universeProbeIds=rownames(seqAnno)[rowData(se)$isPresentProbe])
   }
   ## append the result file with the cluster colors
   resultLoaded = ezRead.table(resultFile$resultFile)
-  resultLoaded$Cluster = clusterResult$clusterColors[clusterResult$clusterNumbers[rownames(resultLoaded)]]
+  resultLoaded$Cluster = clusterResult$clusterNumbers[clusterResult$clusterNumbers[rownames(resultLoaded)]]
   ezWrite.table(resultLoaded, file=resultFile$resultFile)
   if (param$doZip){
     zipFile(resultFile$resultFile)
@@ -473,10 +478,13 @@ if (sum(use) > param$minGenesForClustering){
 ```
 
 ```{r cluster plot link , echo=FALSE, results='asis', eval=!debug && !hasMassiveFeats}
-if (sum(use) > param$minGenesForClustering){
-  cat(paste0("[Plot in pdf](", clusterPdf, ")"), "\n")
-  cat("\n")
-}
+# if (sum(use) > param$minGenesForClustering){
+#  pdf(clusterPdf, width=max(8,4+0.1*ncol(se)), height=10)
+#  eval(plotCmd)
+#  dev.off()
+#   cat(paste0("[Plot in pdf](", clusterPdf, ")"), "\n")
+#   cat("\n")
+# }
 ```
 
 ```{r go cluster table link, echo=FALSE, results='asis', eval=!debug && !hasMassiveFeats}
@@ -490,7 +498,6 @@ if (file.exists("goClusterTable.html")){
 ```{r enrichr, echo=FALSE, message=FALSE, eval=!debug}
 if (doGo(param, seqAnno)){
     if (doEnrichr(param)){
-      require(ReporteRs)
       isSig = rowData(se)$pValue < param$pValThreshGO & rowData(se)$usedInTest
       isUp = rowData(se)$log2Ratio > param$log2RatioThreshGO & isSig
       isDown = rowData(se)$log2Ratio < -param$log2RatioThreshGO & isSig
@@ -505,7 +512,7 @@ if (doGo(param, seqAnno)){
         genesToUse = regulatedGenes[[row]]
         enrichrLinks[row, "Number of Genes"] = length(genesToUse)
         jsCall = paste0('enrich({list: "', paste(genesToUse, collapse="\\n"), '", popup: true});')
-        enrichrLinks[row, "External"] = as.html(pot(paste0("<a href='javascript:void(0)' onClick='", jsCall, "'>Analyse at Enrichr website</a>")))
+        enrichrLinks[row, "External"] = paste0("<a href='javascript:void(0)' onClick='", jsCall, "'>Analyse at Enrichr website</a>")
         resMerged <- NA
         if (!is.null(genesToUse) && length(genesToUse) > 3 && param$doPrecomputeEnrichr) {
           resList = runEnrichr(genesToUse, maxResult = maxResultsPerLibrary)
@@ -522,9 +529,9 @@ if (doGo(param, seqAnno)){
             enrichrTablePath <- paste0("enrichrTable_", row, ".html")
             ezInteractiveTable(resMerged, tableLink=enrichrTablePath,
                                title=paste("Enrichr report for ", row))
-            enrichrLinks[row, "Precomputed"] = as.html(ezLink(link=enrichrTablePath,
-                                                              label="Report",
-                                                              target="_blank"))
+            enrichrLinks[row, "Precomputed"] = ezLink(link=enrichrTablePath,
+                                                      label="Report",
+                                                      target="_blank")
           } else {
             enrichrLinks[row, "Precomputed"] = "No significant results"
           }
@@ -547,6 +554,11 @@ if (doGo(param, seqAnno)){
         kable_styling(bootstrap_options = "striped",
                     full_width = F, position = "left")
     }
+}
+if(!doEnrichr(param)){
+  cat("\n")
+  cat(getOrganism(param$ezRef), "is not supported by Enrichr.")
+  cat("\n")
 }
 ```
 
@@ -634,7 +646,7 @@ if (doGo(param, seqAnno)){
 ```
 
 #### dotplot
-```{r dotplot gsea, echo=FALSE, eval=!debug}
+```{r dotplot gsea, echo=FALSE, message=FALSE, eval=!debug}
 if(exists("enrichResult")){
   for(onto in names(enrichResult)){
     for(sig in names(enrichResult[[onto]])){
@@ -657,50 +669,50 @@ if(exists("enrichResult")){
 
 ```
 
-#### enrichMap
-```{r enrichMap gsea, echo=FALSE, fig.width=14, fig.height=14, eval=FALSE}
-if(exists("enrichResult")){
-for(onto in names(enrichResult)){
-  for(sig in names(enrichResult[[1]])){
-    if(is.null(enrichResult[[onto]][[sig]]) || nrow(enrichResult[[onto]][[sig]]@result) == 0L){
-      next
-    }else{
-        enrichResultReduced <- enrichResult
-        enrichResultReduced[[onto]][[sig]]@result$Description <- substr(enrichResultReduced[[onto]][[sig]]@result$Description, 1, 30)
-      p <- suppressWarnings(emapplot(enrichResultReduced[[onto]][[sig]],
-                                     showCategory=50, main=paste(onto, sig)))
-      print(p)
-      ## enrichMap gives warning somehow. Suppress for less confusion.
-    }
-  }
-}
-}
-```
+<!-- #### enrichMap -->
+<!-- ```{r enrichMap gsea, echo=FALSE, fig.width=14, fig.height=14, eval=FALSE} -->
+<!-- if(exists("enrichResult")){ -->
+<!-- for(onto in names(enrichResult)){ -->
+<!--   for(sig in names(enrichResult[[1]])){ -->
+<!--     if(is.null(enrichResult[[onto]][[sig]]) || nrow(enrichResult[[onto]][[sig]]@result) == 0L){ -->
+<!--       next -->
+<!--     }else{ -->
+<!--         enrichResultReduced <- enrichResult -->
+<!--         enrichResultReduced[[onto]][[sig]]@result$Description <- substr(enrichResultReduced[[onto]][[sig]]@result$Description, 1, 30) -->
+<!--       p <- suppressWarnings(emapplot(enrichResultReduced[[onto]][[sig]], -->
+<!--                                      showCategory=50, main=paste(onto, sig))) -->
+<!--       print(p) -->
+<!--       ## enrichMap gives warning somehow. Suppress for less confusion. -->
+<!--     } -->
+<!--   } -->
+<!-- } -->
+<!-- } -->
+<!-- ``` -->
 
-#### cnetplot
-```{r cnetplot gsea, echo=FALSE, fig.width=14, fig.height=14, eval=FALSE}
-if(exists("enrichResult")){
-for(onto in names(enrichResult)){
-  for(sig in names(enrichResult[[1]])){
-    if(is.null(enrichResult[[onto]][[sig]]) || nrow(enrichResult[[onto]][[sig]]@result) == 0L){
-      next
-    }else{
-      ## By default it plots gene id instead of gene name.
-      ## Replace the gene id with name.
-      enrichResultToPlot <- enrichResult[[onto]][[sig]]
-      resultToPlot <- enrichResultToPlot@result
-      resultToPlot$geneID <- resultToPlot$geneName
-      enrichResultToPlot@result <- resultToPlot
-      
-      p <- cnetplot(enrichResultToPlot,
-                    foldChange=setNames(rowData(se)$log2Ratio, rowData(se)$gene_name),
-                    main=paste(onto, sig))
-      print(p)
-    }
-  }
-}
-}
-```
+<!-- #### cnetplot -->
+<!-- ```{r cnetplot gsea, echo=FALSE, fig.width=14, fig.height=14, eval=FALSE} -->
+<!-- if(exists("enrichResult")){ -->
+<!-- for(onto in names(enrichResult)){ -->
+<!--   for(sig in names(enrichResult[[1]])){ -->
+<!--     if(is.null(enrichResult[[onto]][[sig]]) || nrow(enrichResult[[onto]][[sig]]@result) == 0L){ -->
+<!--       next -->
+<!--     }else{ -->
+<!--       ## By default it plots gene id instead of gene name. -->
+<!--       ## Replace the gene id with name. -->
+<!--       enrichResultToPlot <- enrichResult[[onto]][[sig]] -->
+<!--       resultToPlot <- enrichResultToPlot@result -->
+<!--       resultToPlot$geneID <- resultToPlot$geneName -->
+<!--       enrichResultToPlot@result <- resultToPlot -->
+
+<!--       p <- cnetplot(enrichResultToPlot, -->
+<!--                     foldChange=setNames(rowData(se)$log2Ratio, rowData(se)$gene_name), -->
+<!--                     main=paste(onto, sig)) -->
+<!--       print(p) -->
+<!--     } -->
+<!--   } -->
+<!-- } -->
+<!-- } -->
+<!-- ``` -->
 
 #### Result files
 ```{r hypergeometric result files, echo=FALSE, results='asis'}
@@ -714,81 +726,102 @@ if(exists("enrichResult")){
 ```
 
 ### Gene set enrichment analysis
-```{r gsea compute, echo=FALSE, message=FALSE, eval=!debug, warning=FALSE}
-if (doGo(param, seqAnno)){
-  enrichResultGSEA <- ezGSEA(param, se)
-  resFns <- c()
-}
-```
+<!-- ```{r gsea compute, echo=FALSE, message=FALSE, eval=!debug, warning=FALSE} -->
+<!-- if (doGo(param, seqAnno)){ -->
+<!--   enrichResultGSEA <- ezGSEA(param, se) -->
+<!--   resFns <- c() -->
+<!-- } -->
+<!-- ``` -->
 
-#### dotplot
-```{r dotplot, echo=FALSE, eval=!debug}
-if(exists("enrichResultGSEA")){
-for(onto in names(enrichResultGSEA)){
-  if(is.null(enrichResultGSEA[[onto]]) || nrow(enrichResultGSEA[[onto]]@result) == 0L){
-    cat("No significant gene set.\n")
-    next
-  }else{
-    p <- dotplot(enrichResultGSEA[[onto]], showCategory=20, title=onto)
-    print(p)
-    resFn <- paste(onto, "GSEA.txt", sep="_")
-    write.table(enrichResultGSEA[[onto]], file=resFn,
-                quote=FALSE, col.names = TRUE, row.names = FALSE)
-    resFns <- append(resFns, resFn)
-  }
-}
-}
-```
+<!-- #### dotplot -->
+<!-- ```{r dotplot, echo=FALSE, message=FALSE, eval=!debug} -->
+<!-- if(exists("enrichResultGSEA")){ -->
+<!-- for(onto in names(enrichResultGSEA)){ -->
+<!--   if(is.null(enrichResultGSEA[[onto]]) || nrow(enrichResultGSEA[[onto]]@result) == 0L){ -->
+<!--     cat("No significant gene set.\n") -->
+<!--     next -->
+<!--   }else{ -->
+<!--     p <- dotplot(enrichResultGSEA[[onto]], showCategory=20, title=onto) -->
+<!--     print(p) -->
+<!--     resFn <- paste(onto, "GSEA.txt", sep="_") -->
+<!--     write.table(enrichResultGSEA[[onto]], file=resFn, -->
+<!--                 quote=FALSE, col.names = TRUE, row.names = FALSE) -->
+<!--     resFns <- append(resFns, resFn) -->
+<!--   } -->
+<!-- } -->
+<!-- } -->
+<!-- ``` -->
 
-#### enrichMap
-```{r enrichMap, echo=FALSE, fig.width=14, fig.height=14, eval=FALSE}
-if(exists("enrichResultGSEA")){
-  for(onto in names(enrichResultGSEA)){
-    if(is.null(enrichResultGSEA[[onto]]) || nrow(enrichResultGSEA[[onto]]@result) == 0L){
-      cat("No significant gene set.\n")
-      next
-    }else{
-      p <- suppressWarnings(emapplot(enrichResultGSEA[[onto]], showCategory=50,
-                                     main=onto))
-      print(p)
-    }
-  }
-}
-```
+<!-- #### enrichMap -->
+<!-- ```{r enrichMap, echo=FALSE, fig.width=14, fig.height=14, eval=FALSE} -->
+<!-- if(exists("enrichResultGSEA")){ -->
+<!--   for(onto in names(enrichResultGSEA)){ -->
+<!--     if(is.null(enrichResultGSEA[[onto]]) || nrow(enrichResultGSEA[[onto]]@result) == 0L){ -->
+<!--       cat("No significant gene set.\n") -->
+<!--       next -->
+<!--     }else{ -->
+<!--       p <- suppressWarnings(emapplot(enrichResultGSEA[[onto]], showCategory=50, -->
+<!--                                      main=onto)) -->
+<!--       print(p) -->
+<!--     } -->
+<!--   } -->
+<!-- } -->
+<!-- ``` -->
 
-#### cnetplot
-```{r cnetplot, echo=FALSE, fig.width=14, fig.height=14, eval=FALSE}
-if(exists("enrichResultGSEA")){
-  for(onto in names(enrichResultGSEA)){
-    if(is.null(enrichResultGSEA[[onto]]) || nrow(enrichResultGSEA[[onto]]@result) == 0L){
-      cat("No significant gene set.\n")
-      next
-    }else{
-      ## By default it plots gene id instead of gene name.
-      ## Replace the gene id with name.
-      enrichResultToPlot <- enrichResultGSEA[[onto]]
-      resultToPlot <- enrichResultToPlot@result
-      resultToPlot$core_enrichment <- resultToPlot$geneName
-      enrichResultToPlot@result <- resultToPlot
-      
-      p <- cnetplot(enrichResultToPlot,
-             foldChange=setNames(rowData(se)$log2Ratio, rowData(se)$gene_name),
-             main=onto)
-      print(p)
-    }
-  }
-}
-```
+<!-- #### cnetplot -->
+<!-- ```{r cnetplot, echo=FALSE, fig.width=14, fig.height=14, eval=FALSE} -->
+<!-- if(exists("enrichResultGSEA")){ -->
+<!--   for(onto in names(enrichResultGSEA)){ -->
+<!--     if(is.null(enrichResultGSEA[[onto]]) || nrow(enrichResultGSEA[[onto]]@result) == 0L){ -->
+<!--       cat("No significant gene set.\n") -->
+<!--       next -->
+<!--     }else{ -->
+<!--       ## By default it plots gene id instead of gene name. -->
+<!--       ## Replace the gene id with name. -->
+<!--       enrichResultToPlot <- enrichResultGSEA[[onto]] -->
+<!--       resultToPlot <- enrichResultToPlot@result -->
+<!--       resultToPlot$core_enrichment <- resultToPlot$geneName -->
+<!--       enrichResultToPlot@result <- resultToPlot -->
 
-#### Result files
-```{r GSEA result files, echo=FALSE, results='asis'}
-if(exists("enrichResultGSEA")){
-  for(resFn in resFns){
-    cat("\n")
-    cat(paste0("[", resFn, "](", resFn, ")"))
-    cat("\n")
+<!--       p <- cnetplot(enrichResultToPlot, -->
+<!--              foldChange=setNames(rowData(se)$log2Ratio, rowData(se)$gene_name), -->
+<!--              main=onto) -->
+<!--       print(p) -->
+<!--     } -->
+<!--   } -->
+<!-- } -->
+<!-- ``` -->
+
+<!-- #### Result files -->
+<!-- ```{r GSEA result files, echo=FALSE, results='asis'} -->
+<!-- if(exists("enrichResultGSEA")){ -->
+<!--   for(resFn in resFns){ -->
+<!--     cat("\n") -->
+<!--     cat(paste0("[", resFn, "](", resFn, ")")) -->
+<!--     cat("\n") -->
+<!--   } -->
+<!-- } -->
+<!-- ``` -->
+
+#### Webgestalt
+[InputFiles](./Webgestalt) for [Webgestalt](http://www.webgestalt.org/)
+
+```{r webgestalt, include=FALSE}
+makeWebgestaltFiles(param, resultFile$resultFile)
+if(param$runGSEA){
+  gseaFiles = list.files('Webgestalt', pattern = '^GSEA_Input', full.names = TRUE)
+  for (i in 1:length(gseaFiles)){
+    res = runWebgestaltGSEA(param, gseaFiles[i])
   }
+  ##Keep only interactive html report & zip archive:
+  ezSystem('mv Webgestalt/GSEA_Results/*/*.html Webgestalt/GSEA_Results')
+  ezSystem('mv Webgestalt/GSEA_Results/*/*.zip Webgestalt/GSEA_Results')
+  ezSystem('find Webgestalt/GSEA_Results -maxdepth 1 -mindepth 1 -type d -exec rm -Rf {} \\;')
 }
+ezSystem('zip Webgestalt/InputFiles_GSEA.zip Webgestalt/*.rnk')
+ezSystem('rm Webgestalt/*.rnk')
+ezSystem('zip Webgestalt/InputFiles_ORA.zip Webgestalt/*.txt')
+ezSystem('rm Webgestalt/*.txt')
 ```
 
 ### Technical bias
@@ -861,7 +894,6 @@ if(all(c("gc", "featWidth") %in% colnames(x))) {
 
 ### Input dataset
 ```{r input, echo=FALSE}
-dataset <- data.frame(colData(se), check.names=FALSE, stringsAsFactors=FALSE)
 ezInteractiveTableRmd(values=dataset, digits=4)
 ```
 

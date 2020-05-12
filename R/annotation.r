@@ -193,7 +193,7 @@ makeFeatAnnoEnsembl <- function(featureFile,
                             c("Ensembl Transcript ID", "Description",
                               "GO Term Accession", "GO domain"))
   if(!is.null(biomartFile)){
-    message("Use local biomart file!")
+    message("Using local biomart file!")
     ### Use the downloaded biomartFile when availble
     stopifnot(file.exists(biomartFile))
     require(readr)
@@ -242,7 +242,7 @@ makeFeatAnnoEnsembl <- function(featureFile,
   }
   
   if(!all(featAnno$transcript_id %in% mapping$ensembl_transcript_id)){
-    stop("Some transcript ids don't exist in biomart file!")
+    warning("Some transcript ids don't exist in biomart file!") #Normal for GENCODE
   }
   
   ### description
@@ -291,7 +291,8 @@ makeFeatAnnoEnsembl <- function(featureFile,
 }
 
 ##' @describeIn ezFeatureAnnotation Aggregates the Go annotation.
-aggregateGoAnnotation = function(seqAnno, genes, goColumns=c("GO BP", "GO CC", "GO MF")){
+aggregateGoAnnotation = function(seqAnno, genes,
+                                 goColumns=c("GO BP", "GO CC", "GO MF")){
   if (setequal(genes, rownames(seqAnno))){
     return(seqAnno)
   }
@@ -370,6 +371,7 @@ aggregateFeatAnno <- function(featAnno){
   ## TODO: in the future, maybe we want to return featAnnoGene as data.table
   featAnnoGene <- as.data.frame(featAnnoGene)
   rownames(featAnnoGene) <- featAnnoGene$gene_id
+  featAnnoGene$strand[!featAnnoGene$strand %in% c("+", "-")] <- "*"
   return(featAnnoGene)
 }
 
@@ -443,7 +445,10 @@ getBlacklistedRegions <- function(refBuild=c("hg38", "hg19", "mm10", "mm9",
   }
   return(bedGR)
 }
-
+ 
+### -----------------------------------------------------------------
+### Functions for control sequences
+###
 makeExtraControlSeqGR <- function(ids=NULL){
   controlSeqs <- getControlSeqs(ids)
   txids <- rep(paste0("Transcript_",names(controlSeqs)), each=4)

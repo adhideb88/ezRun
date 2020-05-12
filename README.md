@@ -6,11 +6,16 @@ An R meta-package for the analysis of Next Generation Sequencing data
 ```R
 devtools::install_github("uzh/ezRun")
 ```
+## Dependencies of Python packages
+```Python
+pip3 install velocyto magic-impute
+pip3 install multiqc
+```
 
 ## Dependencies of R/Bioconductor packages
 ```R
 packages <- c("testthat", "knitr", "gage", "goseq", "ChIPpeakAnno", 
-              "DESeq2", "TEQC", "htSeqTools", "pathview", "reshape2", 
+              "DESeq2", "TEQC", "pathview", "reshape2", 
               "vsn", "Rsubread", "preprocessCore", "wesanderson",
               "RCurl", "caTools", "matrixStats", "Repitools", "DT", 
               "htmltools", "biomaRt", "grid", "gridExtra",
@@ -21,9 +26,12 @@ packages <- c("testthat", "knitr", "gage", "goseq", "ChIPpeakAnno",
               "GOstats", "annotate", "bitops", "edgeR", "limma", "S4Vectors",
               "VariantAnnotation", "rmarkdown", "plotly", "scran",
               "ReporteRsjars", "data.table", "kableExtra", "htmlwidgets",
-              "webshot", "clusterProfiler", "dupRadar",
+              "webshot", "clusterProfiler", "dupRadar", "pheatmap",
               "taxize", "SingleCellExperiment", "SummarizedExperiment",
-              "scater", "DropletUtils")
+              "scater", "DropletUtils", "shiny", "heatmaply", "readxl",
+              "readr", "dplyr", "shinycssloaders", "shinyjs", "slingshot",
+              "Rmagic", "reticulate", "viridis", "Seurat", "tidyverse",
+              "httr", "jsonlite", "xml2")
 packages <- setdiff(packages, rownames(installed.packages()))
 BiocManager::install(packages)
 
@@ -31,5 +39,5 @@ install_github("velocyto-team/velocyto.R")
 ```
 
 ## Dependencies of external software
-* bwa, bowtie, bowtie2, STAR, picard, sambamba, samtools
+* bwa, bowtie, bowtie2, STAR, picard, sambamba, samtools, igvtools
 * lsof

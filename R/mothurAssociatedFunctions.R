@@ -176,40 +176,7 @@ writeFasta(fastqFile,'Illumina.fasta', mode = 'a')
   }
   
 
-  ###################################################################
-  # Functional Genomics Center Zurich
-  # This code is distributed under the terms of the GNU General
-  # Public License Version 3, June 2007.
-  # The terms are available here: http://www.gnu.org/licenses/gpl.html
-  # www.fgcz.ch
-  
-  
-  ##' @title OTUs saturation 
-  ##' @description HOw many OTUs do we really have?
-  ##' @param  sharedFile, mothur shared abundance  file.
-  ##' @return Returns a table
-  otuSaturationPlot <- function(sharedFile){
-    sharedAbund <- read.table(sharedFile, stringsAsFactors = FALSE, sep = "\t", header = TRUE)
-    sharedAbund <- t(sharedAbund)
-    totOtus <- sharedAbund[rownames(sharedAbund) == "numOtus",]
-    rowToKeep <- grepl("^Otu.*$",rownames(sharedAbund))
-    sharedAbundDF <- data.frame(data.matrix(data.frame(sharedAbund[rowToKeep,], stringsAsFactors = FALSE)))
-    colnames(sharedAbundDF) <- sharedAbund[rownames(sharedAbund) == "Group",]
-    cumSumTransform <- data.frame(apply(sharedAbundDF,2,cumsum))
-    dfFinal = data.frame()
-    for (i in 1:ncol(cumSumTransform))
-    { dfTemp <-  data.frame(abundances = cumSumTransform[,colnames(cumSumTransform)[i]])
-      dfTemp$sample <- as.factor(colnames(cumSumTransform)[i])
-      dfTemp$xAx <- seq_along(1:nrow(dfTemp))
-      dfFinal <- rbind(dfFinal,dfTemp)
-      }
-    titleText <- "OTU saturation"
-    saturationPlot <- ggplot(dfFinal, aes(x=xAx,y=abundances, group = group,  colour = group)) + geom_line() +
-    labs(title=titleText) + 
-    theme(plot.title=element_text(size=15, face="bold",hjust=0.5))
-    return(saturationPlot)
-  }
-  
+ 
   ###################################################################
   # Functional Genomics Center Zurich
   # This code is distributed under the terms of the GNU General
@@ -236,4 +203,77 @@ writeFasta(fastqFile,'Illumina.fasta', mode = 'a')
     colnames(finalSaturationTable) <- names(tempList)
     rownames(finalSaturationTable) <- seq(from = 10, to = 100, by = 10)
     return(finalSaturationTable)
+  }
+  
+  ###################################################################
+  # Functional Genomics Center Zurich
+  # This code is distributed under the terms of the GNU General
+  # Public License Version 3, June 2007.
+  # The terms are available here: http://www.gnu.org/licenses/gpl.html
+  # www.fgcz.ch
+  
+  
+  ##' @title Mothur fasta summary
+  ##' @description Summarizes read count across samples for a fasta file
+  ##' @param  sharedFile, mothur fasta  file
+  ##' @return Returns a data frame
+
+  countAndAssignSeqsFromFasta <- function(fastaFile,filterStep,groupFile){
+    listOfReads <- readDNAStringSet(fastaFile)
+    groupDesc <- ezRead.table(groupFile, sep = " ", header = F)
+    actualReadNames <- sapply(names(listOfReads), function(x) 
+      unlist(strsplit(x," "))[1])
+    if (fastaFile == "Mothur.fasta"){
+      finaldDF <- cbind(data.frame(table(groupDesc)), fStep = filterStep)
+    } else {
+   rownames(groupDesc) <- gsub(":","_",rownames(groupDesc))
+   names(groupDesc) <- "sample"
+   relIndex <- which(rownames(groupDesc)%in%actualReadNames)
+   finaldDF <- cbind(data.frame(table(groupDesc[relIndex,])), fStep = filterStep)
+    }
+    names(finaldDF)[1] <- "sample"
+   return(finaldDF)
+  }
+    
+  
+  ###################################################################
+  # Functional Genomics Center Zurich
+  # This code is distributed under the terms of the GNU General
+  # Public License Version 3, June 2007.
+  # The terms are available here: http://www.gnu.org/licenses/gpl.html
+  # www.fgcz.ch
+  
+  
+  ##' @title Chimera identification 
+  ##' @description Summarizes chimera rates from chimera file for sample
+  ##' @param  chimerFile mothur chimera file.
+  ##' @return Returns a data frame.
+  
+  chimeraSummaryTable <- function(chimFile,groupFile){
+    groupDesc <- ezRead.table(groupFile, sep = " ", header = F)
+    rownames(groupDesc) <- gsub(":","_",rownames(groupDesc))
+    names(groupDesc) <- "sample"
+    chimeraFile <- read.delim(chimFile, header = F, stringsAsFactors = F)
+    chimeraFile <-  chimeraFile[!duplicated(chimeraFile$V2),]
+    actualReadNames <- chimeraFile$V2
+    listOfSamples <- unique(groupDesc$sample)
+    getChimPerc <- function(sample){
+    relIndex1 <- which(rownames(groupDesc)%in%actualReadNames)
+    temp <- groupDesc[relIndex1,,drop=FALSE]
+    usedReads <-  rownames(temp[temp$sample == sample,,drop=FALSE])
+    chimeraFileSam <- chimeraFile[chimeraFile$V2%in%usedReads,]
+    BL <-  table(chimeraFileSam$V18)["?"]
+    chim <- table(chimeraFileSam$V18)["Y"]
+    noChim <- table(chimeraFileSam$V18)["N"]
+    chimeraDF <- data.frame(rbind(chim,noChim,BL),stringsAsFactors = FALSE)
+    colnames(chimeraDF) = "Freq"
+    chimeraDF[is.na(chimeraDF$Freq),]= 0
+    chimeraDF$Type  = as.factor(c("Chimeric","Not chimeric","Borderline"))
+    chimeraDF$pct  = round(chimeraDF$Freq/sum(chimeraDF$Freq)*100,2)
+    chimeraDF$sample = sample
+    return(chimeraDF)
+    }
+    listOfChimFiles <- lapply(listOfSamples,getChimPerc)
+    finalDF <- do.call("rbind",listOfChimFiles)
+    return(finalDF)
   }

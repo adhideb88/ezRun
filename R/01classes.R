@@ -104,11 +104,11 @@ EzDataset <-
                   "Sets the column selected with \\code{name} to \\code{values}. If \\code{values} is \\code{NULL} the column gets removed"
                   idx = match(name, colNames)
                   if (any(is.na(idx))){
-                    #stop("Column not found in dataset: ", paste(name[is.na(idx)], collapse=" "),
-                    #    "\nAvailable columns: ", paste(colNames, collapse=" "))
+                    stop("Column not found in dataset: ", paste(name[is.na(idx)], collapse=" "),
+                       "\nAvailable columns: ", paste(colNames, collapse=" "))
                     meta[[name]] <<- NA
                     colNames <<- sub(" \\[.*", "", base::names(meta))
-                    idx = match(name, colNames)
+                    idx = match(sub(" \\[.*", "", name), colNames)
                   }
                   meta[ ,idx] <<- values
                   if (is.null(values)){
@@ -427,7 +427,7 @@ cleanForFreeDiskSpace <- function(param){
   
   freeSpace = getGigabyteFree(".")
   i = 0
-  while(getGigabyteFree(".") < param$scratch & i < 60){
+  while(getGigabyteFree(".") < param$scratch & i < 200){
     if(getGigabyteTotal(".") > 1024){
       ## For big nodes with more than 1TB scratch, only clean for trxcopy
       message("Clean for trxcopy!")
@@ -436,7 +436,7 @@ cleanForFreeDiskSpace <- function(param){
       message("Clean for all users!")
       cleanOldestDir(dirPath="/scratch", user=NULL)
     }
-    Sys.sleep(10)
+    Sys.sleep(5)
     i = i + 1
   }
   if (getGigabyteFree(".") < param$scratch){
@@ -474,6 +474,9 @@ cleanOldestDir <- function(dirPath, user=NULL){
   
   ## Don't clean smrt* , pacbio stuff
   allDirs <- grep("(smrt|pacbio)", allDirs, invert = TRUE, value=TRUE)
+
+  ## Don't clean rstudio folders
+  allDirs <- grep("rstudio$", allDirs, invert = TRUE, value=TRUE)
   
   ## Don't clean **.GT folder; created by grid engine
   allDirs <- grep("GT$", allDirs, invert = TRUE, value=TRUE)
@@ -492,7 +495,6 @@ cleanOldestDir <- function(dirPath, user=NULL){
     ## order by ctime
     allInfo <- allInfo[order(allInfo$ctime), ]
     message("Deleting ", rownames(allInfo)[1])
-    Sys.sleep(60)
     unlink(rownames(allInfo)[1], recursive=TRUE, force=TRUE)
   }
 }

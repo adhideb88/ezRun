@@ -66,23 +66,21 @@ ezGrid = function(x, header.columns = FALSE,  valign = "top", ...){
 ##' ezImageFileLink(plotCmd)
 ezImageFileLink = function(plotCmd, file=NULL, name="imagePlot", plotType="plot", mouseOverText="my mouse over",
                            addPdfLink=TRUE, width=480, height=480, ppi=72, envir=parent.frame()){
-  require(ReporteRs, quietly = TRUE)
   if (is.null(file)){
     file = paste0(name, "-", plotType, ".png")
   }
   png(file, width=width, height=height)
   eval(plotCmd, envir=envir)
   dev.off()
+  imgFilePot = paste0("<span><img src='", file, "' title='", mouseOverText, "'/></span>")
   if (addPdfLink) {
     pdfName = sub(".png$", ".pdf", file)
     pdf(file=pdfName, width=width/ppi, height=height/ppi)
     eval(plotCmd, envir=envir)
     dev.off()
-    imgFilePot = pot(paste("<img src='", file, "' title='", mouseOverText, "'/>"), hyperlink = pdfName)
-  } else {
-    imgFilePot = pot(paste("<img src='", file, "' title='", mouseOverText, "'/>"))
+    imgFilePot = paste0("<a href='", pdfName, "'>", imgFilePot, "</a>")
   }
-  return(as.html(imgFilePot))
+  return(imgFilePot)
 }
 
 ## currently not possible to use from old report opener:
@@ -135,32 +133,15 @@ closeBsdocReport = function(doc, file, titles=NULL){
 ##' @template roxygen-template
 addDataset = function(doc, dataset, param){
   ezWrite.table(dataset, file="input_dataset.tsv", head="Name")
-  # jsFile = system.file("extdata/popup.js", package="ezRun", mustWork=TRUE)
-  # addJavascript(doc, jsFile)
   tableLink = "InputDataset.html"
   ezInteractiveTable(dataset, tableLink=tableLink, title="Input Dataset")
   addParagraph(doc, ezLink(tableLink, "Input Dataset", target="_blank"))
-  # if (ezIsSpecified(param$refBuild)){
-  #   addParagraphpots = c(pots, paste("Reference build:", param$refBuild))
-  # }
-  # addFlexTable(doc, ezGrid(pots))
 }
 
-##' @title Writes an error report
-##' @description Writes an error report to an html file. Also creates the file and closes it.
-##' @template htmlFile-template
-##' @param param a list of parameters to extract the \code{name} from.
-##' @param error a character vector representing the error message(s).
-##' @template roxygen-template
-##' @seealso \code{\link{openBsdocReport}}
-##' @seealso \code{\link{closeBsdocReport}}
-##' @examples
-##' param = ezParam()
-##' htmlFile = "example.html"
-##' writeErrorReport(htmlFile, param)
-
+### -----------------------------------------------------------------
+### create error report with Rmd
+###
 writeErrorReport <- function(htmlFile, param=param, error="Unknown Error"){
-  
   ## Copy the style files and templates
   styleFiles <- file.path(system.file("templates", package="ezRun"),
                           c("fgcz.css", "ErrorReport.Rmd",
@@ -206,8 +187,6 @@ newWindowLink = function(linkName, txtName=NULL){
   }
   jsCall = paste0('popup({linkName: "', linkName, '"});')
   return(pot(paste0("<a href='javascript:void(0)' onClick='", jsCall, "'>", title, "</a>")))
-  # jsCall = paste0("javascript:window.open('", linkName, "','", title, "','width=1200,height=900')")
-  # return(pot(paste0('<a href="', jsCall, '">', title, '</a>')))
 }
 
 ezLink = function(link, label=link, target="", type=""){
@@ -219,22 +198,8 @@ ezLink = function(link, label=link, target="", type=""){
     linkTag = paste0(linkTag, " type='", type, "'")
   }  
   linkTag = paste0(linkTag, ">")
-  pot(paste0(linkTag, label, "</a>"))
+  paste0(linkTag, label, "</a>")
 }
-
-# ## enhancement of links with targets and type;
-# ## but see ezLink
-# ezPot = function(value="", format=textProperties(), hyperlink, footnote, linkTarget="", linkType=""){
-#   if (linkTarget != "" || linkType != ""){
-#     value=paste0("<a href='", hyperlink, "' target='", linkTarget, "' type='", linkType, "'>", value, "</a>")
-#     pot(value, format=format, footnote=footnote)
-#     ## in this case the order of the tags is <span><a>label</a></span>
-#   } else {
-#     pot(value, format=format, hyperlink = hyperlink, footnote=footnote)
-#     ## in this case the order of the tags is <a><span>label</span></a>
-#   }
-# }
-
 
 ##' @title Adds a summary of the count result
 ##' @description Adds a summary of the count result to a bsdoc object.
@@ -318,33 +283,6 @@ makeCountResultSummary = function(param, se){
     settings["Linear signal threshold:"] = signif(param$sigThresh, digits=4)
   }
   return(as.data.frame(settings))
-}
-
-##' @title Adds tables of the significant counts
-##' @description Adds tables of the significant counts.
-##' @template doc-template
-##' @templateVar object table
-##' @template result-template
-##' @param pThresh a numeric vector specifying the p-value threshold.
-##' @param genes a character vector containing the gene names.
-##' @param fcThresh a numeric vector specifying the fold change threshold.
-##' @template roxygen-template
-addSignificantCounts = function(doc, result, pThresh=c(0.1, 0.05, 1/10^(2:5))){
-  sigTable = ezFlexTable(getSignificantCountsTable(result, pThresh=pThresh),
-                         header.columns = TRUE, add.rownames = TRUE, talign = "right")
-  sigFcTable = ezFlexTable(getSignificantFoldChangeCountsTable(result, pThresh=pThresh),
-                           header.columns = TRUE, add.rownames = TRUE, talign = "right")
-  tbl = ezGrid(cbind(as.html(sigTable), as.html(sigFcTable)))
-  addFlexTable(doc, tbl)
-}
-
-addSignificantCountsSE = function(doc, se, pThresh=c(0.1, 0.05, 1/10^(2:5))){
-  sigTable = ezFlexTable(getSignificantCountsTableSE(se, pThresh=pThresh),
-                         header.columns = TRUE, add.rownames = TRUE, talign = "right")
-  sigFcTable = ezFlexTable(getSignificantFoldChangeCountsTableSE(se, pThresh=pThresh),
-                           header.columns = TRUE, add.rownames = TRUE, talign = "right")
-  tbl = ezGrid(cbind(as.html(sigTable), as.html(sigFcTable)))
-  addFlexTable(doc, tbl)
 }
 
 makeSignificantCounts = function(se, pThresh=c(0.1, 0.05, 1/10^(2:5))){
@@ -621,10 +559,13 @@ makeWebgestaltFiles <- function(param, resultFile){
     setwdNew('Webgestalt')
     comparison = sub('.txt', '', sub('result--', '', basename(resultFile)))
     background = rownames(result[result$isPresent, ])
-    ezWrite.table(background, paste0('ORA_BG_Webgestalt_',comparison, '.txt') ,row.names = FALSE, col.names = FALSE)
+    ezWrite.table(background, paste0('ORA_BG_Webgestalt_',comparison, '.txt'), row.names = FALSE, col.names = FALSE)
     
     GSEA = cbind(rownames(result[result$isPresent, ]), result[result$isPresent, 'log2 Ratio'])
-    ezWrite.table(GSEA, paste0('GSEA_Input_Webgestalt_',comparison, '.rnk') ,row.names = FALSE, col.names = FALSE)
+    ezWrite.table(GSEA, paste0('GSEA_Input_log2FC_Webgestalt_',comparison, '.rnk'), row.names = FALSE, col.names = FALSE)
+    
+    GSEA_pVal = cbind(rownames(result[result$isPresent, ]), sign(result[result$isPresent, 'log2 Ratio']) * -log10(result[result$isPresent, 'pValue']))
+    ezWrite.table(GSEA_pVal, paste0('GSEA_Input_pVal_Webgestalt_',comparison, '.rnk'), row.names = FALSE, col.names = FALSE)
     
     ORA_Up = rownames(result[result$isPresent & result$pValue < param[['pValueHighlightThresh']] & result[['log2 Ratio']] >= param[['log2RatioHighlightThresh']], ])
     if(length(ORA_Up) > 0){
@@ -642,6 +583,32 @@ makeWebgestaltFiles <- function(param, resultFile){
     }
     setwd('..')
     return('success')
+}
+
+runWebgestaltGSEA <- function(param, rnkFile){
+  require(WebGestaltR)
+  outputDirectory <- file.path(getwd(), 'Webgestalt/GSEA_Results')
+  system(paste('mkdir -p', outputDirectory))
+  speciesName = limma::strsplit2(param$ezRef['refBuild'],'/')[1]
+  organism = paste0(tolower(substr(speciesName,1,1)), sub('.*_', '' ,speciesName))
+  myEnrichDatabases = c('geneontology_Biological_Process_noRedundant',
+                        'geneontology_Cellular_Component_noRedundant',
+                        'geneontology_Molecular_Function_noRedundant',
+                        'pathway_KEGG',
+                        'pathway_Panther',
+                        'pathway_Reactome',
+                        'pathway_Wikipathway')
+  myEnrichDatabases = intersect(listGeneSet(organism = organism)$name, myEnrichDatabases)
+  if(length(intersect(organism, listOrganism())) == 1){
+    for (i in 1:length(myEnrichDatabases)){
+      projectName = paste(myEnrichDatabases[i], sub('^GSEA_Input_', '', sub('.rnk', '', basename(rnkFile))), sep = '_')
+      enrichResult <- WebGestaltR(enrichMethod = "GSEA", organism = organism,
+                                  enrichDatabase = myEnrichDatabases[i], interestGeneFile = rnkFile,
+                                  interestGeneType = "ensembl_gene_id", collapseMethod = "mean",reportNum = 30, fdrThr = 0.1, topThr = 30,
+                                  isOutput = TRUE, outputDirectory = outputDirectory, projectName = projectName, nThreads = param$cores)
+    } 
+  }
+  return('success')
 }
 
 ############################################################

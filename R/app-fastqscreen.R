@@ -8,8 +8,12 @@
 
 ezMethodFastqScreen = function(input=NA, output=NA, param=NA,
                                htmlFile="00index.html"){
+  if(sum(input$meta$`Read Count`) > 1e9){
+    input <- ezMethodSubsampleFastq(input=input, param=param)
+  }
   inputRaw <- input$copy()
   # Preprocessing
+  param$trimAdapter = TRUE
   if(input$readType() == "bam"){
     stopifnot(input$getLength() == 1L) ## We only support one uBam now.
     fastqInput <- ezMethodBam2Fastq(input = input, param = param,
@@ -74,6 +78,10 @@ ezMethodFastqScreen = function(input=NA, output=NA, param=NA,
     countFiles = executeBowtie2CMD_Virus(param, noHit_files)
     speciesPercentageTopVirus = collectBowtie2Output(param, countFiles, 
                                                      readCount, virusResult = T)
+    dir.create('virusCheck')
+    for (i in 1:length(countFiles)){
+      ezSystem(paste('mv', file.path(countFiles[i]), 'virusCheck'))
+    }
   } else {
     speciesPercentageTopVirus = NULL
   }
@@ -93,7 +101,9 @@ ezMethodFastqScreen = function(input=NA, output=NA, param=NA,
   
   #create report
   setwdNew(basename(output$getColumn("Report")))
-  
+  if(param[['virusCheck']]){
+      ezSystem(paste('mv', '../virusCheck', '.'))
+  }
   ## Copy the style files and templates
   styleFiles <- file.path(system.file("templates", package="ezRun"),
                           c("fgcz.css", "FastqScreen.Rmd",
@@ -103,6 +113,9 @@ ezMethodFastqScreen = function(input=NA, output=NA, param=NA,
   ## generate the main reports
   rmarkdown::render(input="FastqScreen.Rmd", envir = new.env(),
                     output_dir=".", output_file=htmlFile, quiet=TRUE)
+  
+  prepareRmdLib()
+  
   return("Success")
 }
 

@@ -39,7 +39,7 @@ getTpm <- function(rawData){
   #   if(!ezIsSpecified(metadata(rawData)$param$scProtocol)){
   #     stop("scProtocol must be specified in param.")
   #   }
-  if(ezIsSpecified(metadata(rawData)$param$scProtocol) && metadata(rawData)$param$scProtocol == "10x"){
+  if(ezIsSpecified(metadata(rawData)$param$scProtocol) && toupper(metadata(rawData)$param$scProtocol) == "10X"){
     require(scater)
     tpm <- calculateTPM(rawData, effective_length=NULL)
     # }else if(metadata(rawData)$param$scProtocol == "smart-Seq2"){
@@ -115,3 +115,39 @@ aggregateCountsByGene <- function(rawData){
   )
   return(newRawData)
 }
+
+## a feature will typically be a gene, isoform, or a microarray probe
+## all matrices/data.frames in rawData must have rownames!
+##' @title Selects features from raw data
+##' @description Selects features from raw data by looking at "signal" (if specified) or "counts" from \code{rawData}.
+##' @template rawData-template
+##' @param keep a character vector specifying which signals or counts to keep.
+##' @template roxygen-template
+##' @return Returns the selected raw data.
+##' @examples
+##' param = ezParam()
+##' param$dataRoot = system.file(package="ezRun", mustWork = TRUE)
+##' file = system.file("extdata/yeast_10k_STAR_counts/dataset.tsv", package="ezRun", mustWork = TRUE)
+##' input = EzDataset$new(file=file, dataRoot=param$dataRoot)
+##' rawData = loadCountDataset(input, param)
+##' keep = "YFR014C"
+##' rd2 = selectFeatures(rawData, keep)
+selectFeatures = function(rawData, keep){
+    
+    if (!is.null(rawData$signal)){
+        stopifnot(keep %in% rownames(rawData$signal))
+        idx = match(keep, rownames(rawData$signal))
+    } else {
+        stopifnot(keep %in% rownames(rawData$counts))
+        idx = match(keep, rownames(rawData$counts))
+    }
+    for (nm in names(rawData)){
+        if (is.matrix(rawData[[nm]]) || is.data.frame(rawData[[nm]])){
+            if (all(keep %in% rownames(rawData[[nm]]))){
+                rawData[[nm]] = rawData[[nm]][idx, , drop=FALSE]      
+            }
+        }
+    }
+    return(rawData)
+}
+

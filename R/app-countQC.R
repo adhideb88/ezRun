@@ -14,9 +14,6 @@ ezMethodCountQC = function(input=NA, output=NA, param=NA,
     rownames(dataset) = addReplicate(apply(ezDesignFromDataset(dataset), 1, 
                                            paste, collapse="_"))
   }
-  if (!is.null(param$removeOutliers) && param$removeOutliers && !is.null(dataset$Outlier)){
-    dataset = dataset[toupper(dataset$Outlier) %in% c("", "NO", '""', "FALSE") == TRUE, ]
-  }
   input$meta = dataset
   
   rawData = loadCountDataset(input, param)
@@ -37,16 +34,7 @@ ezMethodCountQC = function(input=NA, output=NA, param=NA,
   
   setwdNew(basename(output$getColumn("Report")))
   
-  ## debug
-  #saveRDS(rawData, file="rawData.rds")
-  
-  ## Copy the style files and templates
-  styleFiles <- file.path(system.file("templates", package="ezRun"),
-                          c("fgcz.css", "CountQC.Rmd",
-                            "fgcz_header.html", "banner.png"))
-  file.copy(from=styleFiles, to=".", overwrite=TRUE)
-  rmarkdown::render(input="CountQC.Rmd", envir = new.env(),
-                    output_dir=".", output_file=htmlFile, quiet=TRUE)
+  makeRmdReport(output=output, rawData=rawData, rmdFile="CountQC.Rmd", reportTitle="CountQC")
   
   return("Success")
 }
@@ -63,7 +51,8 @@ EzAppCountQC <-
                   "Initializes the application using its specific defaults."
                   runMethod <<- ezMethodCountQC
                   name <<- "EzAppCountQC"
-                  appDefaults <<- rbind(runGO=ezFrame(Type="logical", DefaultValue=TRUE, Description="whether to run the GO analysis"))
+                  appDefaults <<- rbind(runGO=ezFrame(Type="logical", DefaultValue=TRUE, Description="whether to run the GO analysis"),
+                                        nSampleClusters=ezFrame(Type="numeric", DefaultValue=6, Description="Number of SampleClusters, max value 6"))
                 }
               )
   )

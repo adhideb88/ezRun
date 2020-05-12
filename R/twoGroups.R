@@ -20,17 +20,7 @@ cleanupTwoGroupsInput = function(input, param){
     dataset$Name = rownames(dataset)
     rownames(dataset) = addReplicate(apply(ezDesignFromDataset(dataset, param), 1, paste, collapse="_"))
   }
-  if (!is.null(param$removeOutliers) && param$removeOutliers && !is.null(dataset$Outlier)){
-    dataset = dataset[toupper(dataset$Outlier) %in% c("", "NO", '""', "FALSE") == TRUE, ]
-  }
   inputMod = EzDataset(meta=dataset, dataRoot=param$dataRoot)
-  if (!is.null(param$markOutliers) && param$markOutliers){
-    stopifnot(!is.null(dataset$Outlier))
-    grouping = inputMod$getColumn(param$grouping)
-    isOut = dataset$Outlier %in% c("", "NO", '""', "FALSE") == FALSE
-    grouping[isOut] = paste(grouping[isOut], "OUTLIER", sep="_")
-    inputMod$setColumn(grouping)
-  }
   if (!is.null(param$removeOtherGroups) && param$removeOtherGroups){
     grouping = inputMod$getColumn(param$grouping)
     keep = grouping %in% c(param$sampleGroup, param$refGroup)
@@ -75,7 +65,7 @@ twoGroupCountComparison = function(rawData){
   metadata(rawData)$method <- param$testMethod
   
   if (ezIsSpecified(param$grouping2)){
-    if (param$testMethod %in% c("glm", "sam","deseq2")){
+    if (param$testMethod %in% c("glm", "limma","deseq2")){
       metadata(rawData)$method <- paste(metadata(rawData)$method, 
                                         "using secondary factor")
     } else {
@@ -106,9 +96,12 @@ twoGroupCountComparison = function(rawData){
                             param$grouping, param$normMethod, 
                             grouping2=param$grouping2,
                             priorCount=param$backgroundExpression,
-                            deTest=param$deTest),
+                            deTest=param$deTest,
+                            robust=ezIsSpecified(param$robust) && param$robust),
                limma = runLimma(x, param$sampleGroup, param$refGroup, 
-                                param$grouping, grouping2=param$grouping2),
+                                param$grouping, grouping2=param$grouping2,
+                                priorCount=param$priorCount,
+                                modelMethod=param$modelMethod),
                stop("unsupported testMethod: ", param$testMethod)
   )
   rowData(rawData)$log2Ratio <- res$log2FoldChange
@@ -117,11 +110,11 @@ twoGroupCountComparison = function(rawData){
   pValue = res$pval
   pValue[is.na(pValue)] = 1
   
-  if (!is.null(param$runGfold) && param$runGfold && 
-      !is.null(rowData(rawData)$featWidth) && !is.null(rowData(rawData)$gene_name)){
-    rowData(rawData)$gfold <- runGfold(rawData, colData(rawData)$sf, 
-                                       isSample, isRef)
-  }
+  # if (!is.null(param$runGfold) && param$runGfold && 
+  #     !is.null(rowData(rawData)$featWidth) && !is.null(rowData(rawData)$gene_name)){
+  #   rowData(rawData)$gfold <- runGfold(rawData, colData(rawData)$sf, 
+  #                                      isSample, isRef)
+  # }
   metadata(rawData)$nativeResult <- res
   useProbe[is.na(useProbe)] = FALSE
   fdr = rep(NA, length(pValue))
@@ -257,15 +250,13 @@ runEdger = function(x, sampleGroup, refGroup, grouping, normMethod,
 
 ##' @describeIn twoGroupCountComparison Runs the Glm test method.
 runGlm = function(x, sampleGroup, refGroup, grouping, normMethod, grouping2=NULL,
-                  priorCount=0.125, deTest=c("QL", "LR")){
+                  priorCount=0.125, deTest=c("QL", "LR"), robust=FALSE){
   require("edgeR")
   
   ## differential expression test by quasi-likelihood (QL) F-test or 
   ## likelihood ratio test.
   ## QL as default.
   deTest <- match.arg(deTest)
-  
-  robust = ezIsSpecified(param$robust) && param$robust
 
   ## get the scaling factors for the entire data set
   cds = DGEList(counts=x, group=grouping)
@@ -325,5 +316,62 @@ runGlm = function(x, sampleGroup, refGroup, grouping, normMethod, grouping2=NULL
   #res$groupMeans = cbind(apply(cds$count[ , grouping == sampleGroup, drop=FALSE], 1, mean), apply(cds$count[ , grouping == refGroup, drop=FALSE], 1, mean))
   #colnames(res$groupMeans) = c(sampleGroup, refGroup)
   #rownames(res$groupMeans) = rownames(cds$count)
+  return(res)
+}
+
+runLimma = function(x, sampleGroup, refGroup, grouping, grouping2=NULL,
+                    priorCount=3, modelMethod=c("limma-trend", "voom")){
+  require(limma)
+  require(edgeR)
+  
+  modelMethod <- match.arg(modelMethod)
+
+  cds <- DGEList(counts=x)
+  cds <- calcNormFactors(cds)
+  
+  sf = 1/(cds$samples$norm.factors * cds$samples$lib.size)
+  sf = sf / ezGeomean(sf)
+  
+  ## run analysis and especially dispersion estimates only on subset of the data
+  isSample = grouping == sampleGroup
+  isRef = grouping == refGroup
+  grouping = grouping[isSample|isRef]
+  if(ezIsSpecified(grouping2)){
+    grouping2 <- grouping2[isSample|isRef]
+  }
+  
+  x2 = x[ ,isSample|isRef]
+  cds = DGEList(counts=x2, group=grouping)
+  cds = calcNormFactors(cds)
+  
+  groupFactor = factor(grouping, levels = c(refGroup, sampleGroup))
+  design = model.matrix( ~ groupFactor)
+  
+  if(modelMethod == "limma-trend"){
+    logCPM <- cpm(cds, log=TRUE, prior.count=priorCount)
+    if(ezIsSpecified(grouping2)){
+      corfit <- duplicateCorrelation(logCPM, design, block=grouping2)
+      fit <- lmFit(logCPM, design, block=grouping2, correlation=corfit$consensus)
+    }else{
+      fit <- lmFit(logCPM, design)
+    }
+    fit <- eBayes(fit, trend=TRUE)
+    topDT <- topTable(fit, num=Inf, coef=ncol(design))
+  }else if(modelMethod == "voom"){
+    v <- voom(cds, design, plot=FALSE)
+    if(ezIsSpecified(grouping2)){
+      corfit <- duplicateCorrelation(v, design, block=grouping2)
+      fit <- lmFit(v, design, block=grouping2, correlation=corfit$consensus)
+    }else{
+      fit <- lmFit(v, design)
+    }
+    fit <- eBayes(fit)
+    topDT <- topTable(fit, num=Inf, coef=ncol(design))
+  }
+  res = list()
+  res$id = rownames(topDT)
+  res$log2FoldChange = topDT$logFC
+  res$pval = topDT$P.Value
+  res$sf = sf
   return(res)
 }

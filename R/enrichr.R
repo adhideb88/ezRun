@@ -71,9 +71,12 @@ runEnrichr <- function(genes, minScore = 12, maxAdjP = 0.01, minOverlapGenes = 3
   }
   resFilt <- list()
   if (length(res$success) > 0) {
-    resFilt <- filterEnrichrResults(res$success, minCombinedScore = minScore, maxPAdj = maxAdjP, 
-                                    minOverlapGenes = minOverlapGenes, softFilter = softFilter,
-                                    maxResult = maxResult)
+    res$success = res$success[sapply(res$success, is.data.frame)]
+    if (length(res$success) > 0) {
+      resFilt <- filterEnrichrResults(res$success, minCombinedScore = minScore, maxPAdj = maxAdjP, 
+                                      minOverlapGenes = minOverlapGenes, softFilter = softFilter,
+                                      maxResult = maxResult)
+    }
   }
   resFilt
 }
@@ -175,6 +178,10 @@ enrichrEnrich <- function(userListId, libNames = getEnrichrLibNames(), connectio
     if ("expired" %in% names(respParsed) && respParsed$expired == T) {
       stop("The server response indicates that the gene set has expired")
     }
+    if (length(respParsed) == 0){
+      saveRDS(respParsed, file=paste0("enrichr-error-response", ezTime(), "-debug.rds"))
+      stop("the length of the parsed response is zero")
+    }
     respParsed <- respParsed[[1]]
     fieldNames <- c("Rank", "Term", "p_value", "z_score", "Combined.Score", "Overlapping.Genes",
                     "Adjusted.p_value", "Old.p_value", "Old.Adjusted.p_value", "nOverlapping.Genes")
@@ -220,15 +227,17 @@ enrichrEnrich <- function(userListId, libNames = getEnrichrLibNames(), connectio
               parseResp(x),
               error = function(e) {
                 saveRDS(e, file=paste0("enrichr-error-", ezTime(), "-debug.rds"))
-                failure[[libName]] <<- paste("Response parsing failure with", e) }
+                #failure[[libName]] <<- paste("Response parsing failure with", e)
+                NULL}
             )
-          },
-          # In case of a failure, curl returns only the error message that does not contain the URL,
-          # so we have no way to determine which request failed. So, we'll just append the message to
-          # the end of the list.
-          fail = function(x) {
-            saveRDS(x, file=paste0("enrichr-fail-", ezTime(), "-debug.rds"))
-            k <- length(failure) + 1; failure[[k]] <<- x }
+          }
+          # The code below did not work, the try-catch above prevented from the fail. and the variable failure was apparently not set
+          # # In case of a failure, curl returns only the error message that does not contain the URL,
+          # # so we have no way to determine which request failed. So, we'll just append the message to
+          # # the end of the list.
+          # fail = function(x) {
+          #   saveRDS(x, file=paste0("enrichr-fail-", ezTime(), "-debug.rds"))
+          #   k <- length(failure) + 1; failure[[k]] <<- x }
         )
     }
     multi_run(pool = pool, timeout=300)
@@ -287,7 +296,7 @@ filterEnrichrResults <- function(resList, maxP = 1, maxPAdj = 1, maxZ = 0, minCo
 ##' @author Roman Briskine
 getEnrichrLibNames <- function() {
   file <- system.file(file.path("extdata", "enrichr_libnames.txt"), package = "ezRun", mustWork = T)
-  scan(file, character(), quiet = T)
+  scan(file, character(), quiet = T, comment.char="#")
 }
 
 

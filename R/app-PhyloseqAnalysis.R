@@ -21,43 +21,65 @@ ezMethodPhyloSeqAnalysis = function(input=NA, output=NA, param=NA,
   require(kableExtra)
   require(knitr)
   library(pheatmap)
+  library(ggpubr)
+  library(xfun)
+  library(vegan)
+  library(gridExtra)
+  library(iNEXT)
+  
   
   dataset = input$meta
-  isGroupThere = param$group
+  rank = param$taxonomicRank
+  rawCount = param$rawCount
+  sampleFraction = as.numeric(param$sampleFraction)
+  numTopRanks=param$numTopRanks
+  isGroupThere = param$grouping != ""
+  if (isGroupThere) {
+    group <- param$grouping
+    if (param$sampleGroup == "" | param$refGroup == ""){
+      stop("Both sample and reference groups must be specified")
+    } else{
+    sampleGroup <- param$sampleGroup
+    refGroup <- param$refGroup
+    }
+  }
 ### Analyzes results with phyloseq: preparing objects to be processed in the Rmd file
 
-### OTUs
-  ### create phyloseq OTU object
-  otuObject <- phyloSeqOTUFromFile(input$getFullPaths("OTUsCountTable"))
-  ### create phyloseq Taxa object
-  taxaObject <- phyloSeqTaxaFromFile(input$getFullPaths("OTUsToTaxonomyFile"))
+### load  objects
+  ## QC and chimera data
+  QCChimeraObjectRData <- input$getFullPaths("RObjectQCChimera")
+  QCChimeraObject <- readRDS(QCChimeraObjectRData)
+  ## phyloseq object
+  physeqObjectRData <- input$getFullPaths("RObjectPhyloseq")
+  physeqObjectNoTreeUnfilt <- readRDS(physeqObjectRData)
   
-  ### Eventual groups
+
+  
+### check how many cols sample data has; if only one, add a second otherwise the plot funciton is buggy
   if (isGroupThere){
-  designMatrix <- ezRead.table(input$getFullPaths("sampleDescriptionFile"))
-  sampleObject <- sample_data(designMatrix)
-  physeqObjectNoTree = phyloseq(otuObject, taxaObject, sampleObject)
-  }else{
-    physeqObjectNoTree = phyloseq(otuObject, taxaObject)
-  }
-  ##prune OTUS
-  pruneLevel <- param$representativeOTUs
+  N <- ncol(sample_data(physeqObjectNoTreeUnfilt))
+  if (N==1) {
+   areThereMultVar <- FALSE
+    sample_data(physeqObjectNoTreeUnfilt)[,"dummy"] <- sample_data(physeqObjectNoTreeUnfilt)[,1]  
+  }  else {
+    areThereMultVar <- TRUE
+  } 
+  ### also ensure the groups are factor 
+  sample_data(physeqObjectNoTreeUnfilt)@.Data  <- lapply(sample_data(physeqObjectNoTreeUnfilt)@.Data, as.factor)
+  } else {
+    areThereMultVar <- FALSE
+}
+### Filtering step
+  physeqFullObject <- phyloSeqPreprocess(physeqObjectNoTreeUnfilt,rawCount,sampleFraction)
 
-### create, add trees, preprocess and prune phyloseq object 
-
-  treeObject = rtree(ntaxa(physeqObjectNoTree), rooted=TRUE, tip.label=taxa_names(physeqObjectNoTree))
-  physeqFullObject <- merge_phyloseq(physeqObjectNoTree,treeObject)
-  physeqFullObject <- phyloSeqPreprocess(physeqFullObject)
-  myTaxa = names(sort(taxa_sums(physeqFullObject), decreasing = TRUE)[1:pruneLevel])
-  physeqFullObject <- prune_taxa(myTaxa,physeqFullObject)
-  
+### run report  
   setwdNew(basename(output$getColumn("Report")))
   
   if (isGroupThere){
     markdownFile <- "PhyloseqReport.Rmd"
   }else{
     markdownFile <- "PhyloseqReportNoGroup.Rmd"
-  }
+ }
   ## Copy the style files and templates
   styleFiles <- file.path(system.file("templates", package="ezRun"),
                           c("fgcz.css", markdownFile, 
@@ -65,6 +87,8 @@ ezMethodPhyloSeqAnalysis = function(input=NA, output=NA, param=NA,
   file.copy(from=styleFiles, to=".", overwrite=TRUE)
   rmarkdown::render(input=markdownFile, envir = new.env(),
                     output_dir=".", output_file=htmlFile, quiet=TRUE)
+  
+  return("Success")
 }
 ##' @template app-template
 ##' @templateVar method ezMethodPhyloSeqAnalysis()
@@ -79,8 +103,10 @@ EzAppPhyloSeqAnalysis <-
                   "Initializes the application using its specific defaults."
                   runMethod <<- ezMethodPhyloSeqAnalysis
                   name <<- "EzAppPhyloSeqAnalysis"
-                  appDefaults <<- rbind(representativeOTUs = ezFrame(Type="numeric",  DefaultValue="",Description="Number of core OTUs for  samples."),
-                                        group = ezFrame(Type="logical",  DefaultValue="true",Description="Experiment with groups.")
+                  appDefaults <<- rbind(taxonomicRank = ezFrame(Type="character",  DefaultValue="Phylum",Description="Rank to be highlighted in the plots"),
+                                        numTopRanks = ezFrame(Type="numeric",  DefaultValue="15",Description="Number of top OTUs for the plots"),
+                                        rawCount = ezFrame(Type="numeric",  DefaultValue="15",Description="OTUs with fewer than these counts in less than the fraction of samples below will be removed."),
+                                        sampleFraction = ezFrame(Type="numeric",  DefaultValue="15",Description="Minimum fraction of samples for which the raw count threshold above applies")
                   )
                 }
               )

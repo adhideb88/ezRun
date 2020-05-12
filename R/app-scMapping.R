@@ -109,6 +109,7 @@ ezMethodSingleCellSTAR = function(input=NA, output=NA, param=NA){
   if (!grepl("outSAMattributes", param$cmdOptions)){
     param$cmdOptions = paste(param$cmdOptions, "--outSAMattributes All")
   }
+  # param$cmdOptions = paste(param$cmdOptions, "--genomeLoad LoadAndRemove")
   
   genomeFn <- param$ezRef@refFastaFile
   
@@ -125,8 +126,7 @@ ezMethodSingleCellSTAR = function(input=NA, output=NA, param=NA){
     writeXStringSet(getControlSeqs(param$controlSeqs), filepath=genomeLocalFn,
                     append=TRUE)
     dictFile = sub(".fa$", ".dict", genomeLocalFn)
-    cmd = paste("java -Djava.io.tmpdir=. ", " -jar", 
-                Sys.getenv("Picard_jar"), "CreateSequenceDictionary",
+    cmd = paste(preparePicard(), "CreateSequenceDictionary",
                 paste0("R=", genomeLocalFn), paste0("O=", dictFile))
     ezSystem(cmd)
     
@@ -166,7 +166,7 @@ ezMethodSingleCellSTAR = function(input=NA, output=NA, param=NA){
   
   nSortThreads = min(param$cores, 8)
   ## if the index is loaded in shared memory we have to use only 10% of the scheduled RAM
-  if (grepl("--genomeLoad LoadAndKeep", param$cmdOptions)){
+  if (grepl("--genomeLoad Load", param$cmdOptions)){
     sortRam = param$ram / 10
   } else {
     sortRam = param$ram

@@ -14,9 +14,24 @@ EzAppSCReportMerging <-
                   "Initializes the application using its specific defaults."
                   runMethod <<- ezMethodSCReportMerging
                   name <<- "EzAppSCReportMerging"
-                  appDefaults <<- rbind(scProtocol=ezFrame(Type="character", DefaultValue="", Description="Which single cell protocol?"),
+                  appDefaults <<- rbind(scProtocol=ezFrame(Type="character", DefaultValue="10x", Description="Which single cell protocol?"),
+                                        x.low.cutoff=ezFrame(Type="numeric", 
+                                                             DefaultValue=0.0125, 
+                                                             Description="Bottom cutoff on x-axis for identifying variable genes"),
+                                        x.high.cutoff=ezFrame(Type="numeric", 
+                                                              DefaultValue=3,
+                                                              Description="Top cutoff on x-axis for identifying variable genes"),
+                                        y.cutoff=ezFrame(Type="numeric", 
+                                                         DefaultValue=0.5,
+                                                         Description="Bottom cutoff on y-axis for identifying variable genes"),
+                                        vars.to.regress=ezFrame(Type="charVector", 
+                                                                DefaultValue="nUMI,perc_mito", 
+                                                                Description="Variables to regress out"),
+                                        pcs=ezFrame(Type="numeric", 
+                                                    DefaultValue=20, 
+                                                    Description="The maximal dimensions to use for reduction"),
                                         resolution=ezFrame(Type="numeric", 
-                                                           DefaultValue=0.6, 
+                                                           DefaultValue=0.6,
                                                            Description="Value of the resolution parameter, use a value above (below) 1.0 if you want to obtain a larger (smaller) number of communities."),
                                         batchCorrection=ezFrame(Type="character", 
                                                                 DefaultValue="CCA",
@@ -24,18 +39,24 @@ EzAppSCReportMerging <-
                                         cc=ezFrame(Type="numeric",
                                                    DefaultValue=20,
                                                    Description="The number of CC for CCA analysis"),
-                                        chosenClusters1=ezFrame(Type="charVector",
-                                                                DefaultValue="",
-                                                                Description="Clusters to choose to merge in sample 1"),
-                                        chosenClusters2=ezFrame(Type="charVector",
-                                                                DefaultValue="",
-                                                                Description="Clusters to choose to merge in sample 2"),
+                                        resolutionCCA=ezFrame(Type="numeric", 
+                                                              DefaultValue=0.6,
+                                                              Description="Value of the resolution parameter, use a value above (below) 1.0 if you want to obtain a larger (smaller) number of communities."),
+                                        chosenClusters=ezFrame(Type="charList",
+                                                               DefaultValue="",
+                                                               Description="The clusters to choose from each sample.In the format of sample1=cluster1,cluster2;sample2=cluster1,cluster2."),
                                         all2allMarkers=ezFrame(Type="logical",
                                                                DefaultValue=FALSE, 
                                                                Description="Run all against all cluster comparisons?"),
+                                        computeDifferentialExpression=ezFrame(Type="logical",
+                                                               DefaultValue=TRUE, 
+                                                               Description="Compute differential expression between samples"),
                                         markersToShow=ezFrame(Type="numeric", 
                                                               DefaultValue=10, 
-                                                              Description="The markers to show in the heatmap of cluster marker genes"))
+                                                              Description="The markers to show in the heatmap of cluster marker genes"),
+                                        maxSamplesSupported=ezFrame(Type="numeric", 
+                                                              DefaultValue=5, 
+                                                              Description="Maximum number of samples to compare"))
                 }
               )
   )
@@ -46,17 +67,19 @@ ezMethodSCReportMerging = function(input=NA, output=NA, param=NA,
   samples <- param$samples
   input <- input$subset(samples)
   
-  if(input$getLength() != 2L){
-    stop("It only works for merging two samples at once!")
+  if(input$getLength() > param$maxSamplesSupported){
+    stop(paste("It only works for", param$maxSamplesSupported, "at most"))
   }
   
   cwd <- getwd()
   setwdNew(basename(output$getColumn("Report")))
   on.exit(setwd(cwd), add=TRUE)
-  reportCwd <- getwd()
   
-  sce1URL <- input$getColumn("Static Report")[1]
-  sce2URL <- input$getColumn("Static Report")[2]
+  param$name <- paste(param$name, paste(input$getNames(), collapse=", "),
+                      sep=": ")
+  
+  sceURLs <- input$getColumn("Static Report")
+  
   saveRDS(param, file = "param.rds")
   
   ## Copy the style files and templates

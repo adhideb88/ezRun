@@ -14,9 +14,7 @@ EzAppSCCountQC <-
                   "Initializes the application using its specific defaults."
                   runMethod <<- ezMethodSCCountQC
                   name <<- "EzAppSCCountQC"
-                  appDefaults <<- rbind(minReadsPerCell=ezFrame(Type="numeric", DefaultValue=1500, Description="Filter cells with less reads counted on genes"),
-                                        minReadsPerGene=ezFrame(Type="numeric", DefaultValue=3, Description="Minimal number of reads per gene to be expressed"),
-                                        minGenesPerCell=ezFrame(Type="numeric", DefaultValue=500, Description="Filter cells with less genes expressed"))
+                  appDefaults <<- rbind(scProtocol=ezFrame(Type="character", DefaultValue="10X", Description="Which single cell protocol?"))
                 }
               )
   )
@@ -33,9 +31,6 @@ ezMethodSCCountQC = function(input=NA, output=NA, param=NA,
   on.exit(setwd(cwd), add=TRUE)
   reportCwd <- getwd()
   
-  ## STAR log: available for smart-seq2, not for 10x
-  param$scProtocol <- ifelse("STARLog" %in% input$colNames, "smart-Seq2", "10x")
-  
   sce <- loadSCCountDataset(input, param)
   
   ## SCCountQC always process one plate/sample once; remove the plate name
@@ -45,13 +40,15 @@ ezMethodSCCountQC = function(input=NA, output=NA, param=NA,
                                     paste(input$getNames(), collapse=", "),
                                     sep=": ")
   param <- metadata(sce)$param
-  if(param$scProtocol == "smart-Seq2"){
-    mlog <- read.table(input$getFullPaths("STARLog"), sep="|", 
-                       as.is = TRUE, quote = "\"", fill=T)
+  if(toupper(param$scProtocol) == "SMART-SEQ2"){
+    mlog <- read.table(sub("-counts\\.mtx$", "_STAR.log", 
+                           input$getFullPaths("CountMatrix")),
+                       sep="|", as.is = TRUE, quote = "\"", fill=T)
     rownames(mlog) <- trimws(mlog[,1])
     metadata(sce)$mlog <- mlog
     
-    inBam <- getBamLocally(input$getFullPaths("BAM"))
+    inBam <- getBamLocally(sub("-counts\\.mtx$", ".bam",
+                               input$getFullPaths("CountMatrix")))
     on.exit(file.remove(file.path(reportCwd, c(inBam, paste0(inBam, ".bai")))), 
             add = TRUE)
   }
@@ -88,7 +85,6 @@ ezMethodSCCountQC = function(input=NA, output=NA, param=NA,
   ## Picard metrics
   if(param$scProtocol == "smart-Seq2" && !param$hasControlSeqs){
     bamRGFns <- splitBamByRG(inBam, mc.cores=param$cores)
-    on.exit(file.remove(file.path(reportCwd, bamRGFns)), add = TRUE)
     
     ### CollectAlignmentSummaryMetrics
     message("Start CollectAlignmentSummaryMetrics", date())
@@ -119,6 +115,8 @@ ezMethodSCCountQC = function(input=NA, output=NA, param=NA,
     colData(sce) <- as(data.frame(colData(sce), dupMetrics[colnames(sce), ],
                                   check.names = FALSE, stringsAsFactors = FALSE),
                        "DataFrame")
+    
+    file.remove(file.path(reportCwd, bamRGFns))
   }
   metadata(sce)$param <- param
   saveRDS(sce, file="sce.rds")

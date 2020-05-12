@@ -4,6 +4,14 @@
 \alias{writeDEXSeqReport}
 \title{Writing a report for a DEXSeq analysis}
 \usage{
-writeDEXSeqReport(dataset, dexResult, htmlFile = "00index.html",
-  sResultDir = "html")
+writeDEXSeqReport(
+  dataset,
+  dexResult,
+  htmlFile = "00index.html",
+  sResultDir = "html",
+  BPPARAM = bpparam()
+)
+}
+\description{
+Addition experimental conditions to input files
 }

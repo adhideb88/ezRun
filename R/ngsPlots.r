@@ -110,30 +110,33 @@ ezMdsGG2 <- function(signal, design, ndim=2, main="MDS plot"){
   p
 }
 
-ezMdsPlotly <- function(signal, design, ndim=c(3,2), main){
+ezMdsPlotly <- function(signal, design, ndim=c(3,2), main, sampleColors=NULL){
   require("edgeR")
   require(plotly)
   y = DGEList(counts=signal, group=colnames(signal))
   mds = plotMDS(y, plot=FALSE, ndim=ndim)
+  factorToPlot = colnames(design)[1]
   toPlot <- data.frame(samples=colnames(signal),
                        design,
+                       sampleColors,
                        stringsAsFactors = FALSE)
   mdsOut <- mds$cmdscale.out
- 
+  
+  # names of color vector need to match the selected design factor
+  pal = toPlot[,c(factorToPlot,"sampleColors")]
+  pal = pal[!duplicated(pal),]
+  pal = setNames(pal[['sampleColors']],pal[[factorToPlot]])
+    
   if(ndim == 3){
     colnames(mdsOut) <- c("Leading logFC dim1", "Leading logFC dim2", 
                           "Leading logFC dim3")
     toPlot <- cbind(toPlot, mdsOut)
-    p <- plot_ly(toPlot, x=~`Leading logFC dim1`, y=~`Leading logFC dim2`, 
-                 z=~`Leading logFC dim3`, 
-                 color=formula(paste0("~", colnames(design)[1])),
-                 colors = "Set1",
-                 #mode = "markers",
-                 #symbol = ~Subject, ## 3D scatter plot doesn't support many symbols
-                 #symbols = 1:4,
-                 text=toPlot$samples) %>%
-      add_markers() %>% 
-      add_text(textposition = "top right", showlegend=FALSE) %>%
+    p <- plot_ly(toPlot, x=~`Leading logFC dim1`, y=~`Leading logFC dim2`, z=~`Leading logFC dim3`,
+                 color=formula(paste0("~", factorToPlot)),
+                 colors=pal,
+                 type='scatter3d',
+                 mode='markers+text',
+                 text=~samples, textposition = "top right")%>%
       plotly::layout(title=main, 
                      scene=list(xaxis=list(title = 'Leading logFC dim1'),
                                 yaxis = list(title = 'Leading logFC dim2'),
@@ -142,25 +145,22 @@ ezMdsPlotly <- function(signal, design, ndim=c(3,2), main){
     colnames(mdsOut) <- c("Leading logFC dim1", "Leading logFC dim2")
     toPlot <- cbind(toPlot, mdsOut)
     if(ncol(design) > 1L){
-      p <- plot_ly(toPlot, x=~`Leading logFC dim1`, y=~`Leading logFC dim2`, 
-                   color=formula(paste0("~", colnames(design)[1])), 
-                   colors="Set1", marker = list(size = 10),
-                   symbol=formula(paste0("~", colnames(design)[2])),
-                   text=toPlot$samples)
+      p <- plot_ly(toPlot, x=~`Leading logFC dim1`, y=~`Leading logFC dim2`,
+              color = formula(paste0("~", factorToPlot)),
+              symbol=formula(paste0("~", colnames(design)[2])),
+              colors = pal,
+              type='scatter',
+              mode='markers+text',
+              text=~samples, textposition = "top right")
     }else{
-      p <- plot_ly(toPlot, x=~`Leading logFC dim1`, y=~`Leading logFC dim2`, 
-                   color=formula(paste0("~", colnames(design)[1])), 
-                   colors="Set1", marker = list(size = 10),
-                   text=toPlot$samples)
+      p <- plot_ly(toPlot, x=~`Leading logFC dim1`, y=~`Leading logFC dim2`,
+                   color=formula(paste0("~", factorToPlot)),
+                   colors = pal,
+                   type='scatter',
+                   mode='markers+text',
+                   text=~samples, textposition = "top right")
     }
-    p <- p %>% add_markers() %>% 
-      #add_annotations(x=toPlot$`Leading logFC dim1`,
-      #                y=toPlot$`Leading logFC dim2`,
-      #                text=toPlot$samples,
-      #               xref = "x", yref = "y", showarrow=FALSE
-      #               ) %>%
-      # Showing the text all mess up the coloring with symbols
-      #add_text(textposition = "top center", showlegend=FALSE) %>%
+    p <- p %>% 
       plotly::layout(title=main,
                      xaxis = list(title = 'Leading logFC dim1'),
                      yaxis = list(title = 'Leading logFC dim2'))

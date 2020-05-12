@@ -98,6 +98,7 @@ ezMethodFeatureCounts = function(input=NA, output=NA, param=NA){
                                                   "gene"="gene_id",
                                                   "transcript"="transcript_id",
                                                   "isoform"="transcript_id",
+                                                  "exon"="exon_id",
                                                   stop("unsupported feature level: ", param$featureLevel)),
                               useMetaFeatures=param$useMetaFeatures,
                               allowMultiOverlap=param$allowMultiOverlap,
@@ -181,15 +182,6 @@ EzAppSingleCellFeatureCounts <-
                           ignoreDup=ezFrame(Type="logical",
                                             DefaultValue="FALSE",
                                             Description="ignore reads marked as duplicates"),
-                          aroundTSSCounting=ezFrame(Type="logical",
-                                                    DefaultValue="FALSE",
-                                                    Description="count reads only around TSS of genes"),
-                          downstreamFlanking=ezFrame(Type="integer",
-                                                     DefaultValue="250",
-                                                     Description="the number of bases downstream of TSS"),
-                          upstreamFlanking=ezFrame(Type="integer",
-                                                   DefaultValue="250",
-                                                   Description="the number of bases upstream of TSS"),
                           controlSeqs=ezFrame(Type="charVector",
                                               DefaultValue="",
                                               Description="control sequences to add")
@@ -202,6 +194,8 @@ ezMethodSingleCellFeatureCounts <- function(input=NA, output=NA, param=NA){
   require(GenomicRanges)
   require(Rsubread)
   require(rtracklayer)
+  require(tibble)
+  require(readr)
   
   bamFile = input$getFullPaths("BAM")
   localBamFile = getBamLocally(bamFile)
@@ -216,107 +210,53 @@ ezMethodSingleCellFeatureCounts <- function(input=NA, output=NA, param=NA){
   require(Rsamtools)
   bamHeaders <- scanBamHeader(localBamFile)
   hasRG <- "@RG" %in% names(bamHeaders[[1]]$text)
-  
-  if(!is.null(param$aroundTSSCounting) && param$aroundTSSCounting){
-    gtf <- rtracklayer::import(param$ezRef@refFeatureFile)
-    seqlengthsRef <- fasta.seqlengths(param$ezRef@refFastaFile)
-    seqlengths(gtf) <- seqlengthsRef[names(seqlengths(gtf))]
-    gtf <- gtf[gtf$type == "gene"]
-    if (ezIsSpecified(param$transcriptTypes)){
-      seqAnno = ezFeatureAnnotation(param$ezRef@refAnnotationFile,
-                                    dataFeatureType="gene")
-      genesUse <- rownames(seqAnno)[seqAnno$type %in% param$transcriptTypes]
-      gtf <- gtf[gtf$gene_id %in% genesUse]
-    }
-    
-    gtfFile = paste(Sys.getpid(), "genes.gtf", sep="-")
-    gtf <- trim(suppressWarnings(promoters(gtf, upstream=param$upstreamFlanking,
-                                           downstream=param$downstreamFlanking)))
-    rtracklayer::export(gtf, gtfFile)
-    on.exit(file.remove(gtfFile), add=TRUE)
-    
-    countResult = featureCounts(localBamFile, annot.inbuilt=NULL,
-                                          annot.ext=gtfFile, isGTFAnnotationFile=TRUE,
-                                          GTF.featureType='gene',
-                                          GTF.attrType= 'gene_id',
-                                          useMetaFeatures=param$useMetaFeatures,
-                                          allowMultiOverlap=param$allowMultiOverlap,
-                                          isPairedEnd=param$paired, 
-                                          requireBothEndsMapped=FALSE,
-                                          checkFragLength=FALSE,minFragLength=50,
-                                          maxFragLength=600,
-                                          nthreads=param$cores, 
-                                          strandSpecific=switch(param$strandMode, "both"=0, "sense"=1, "antisense"=2, stop("unsupported strand mode: ", param$strandMode)),
-                                          minMQS=param$minMapQuality,
-                                          readExtension5=0,readExtension3=0,
-                                          read2pos=NULL,
-                                          minOverlap=param$minFeatureOverlap,
-                                          ignoreDup=param$ignoreDup,
-                                          splitOnly=FALSE,
-                                          countMultiMappingReads=param$keepMultiHits,
-                                          fraction=param$keepMultiHits & !param$countPrimaryAlignmentsOnly,
-                                          primaryOnly=param$countPrimaryAlignmentsOnly,
-                                          countChimericFragments=TRUE,
-                                          chrAliases=NULL,reportReads=NULL,
-                                          byReadGroup=ifelse(hasRG, TRUE, FALSE))
-  }else{
-    gtfFile = paste(Sys.getpid(), "genes.gtf", sep="-")
-    on.exit(file.remove(gtfFile), add=TRUE)
-    if (ezIsSpecified(param$transcriptTypes)){
-      seqAnno = ezFeatureAnnotation(param$ezRef@refAnnotationFile,
-                                    dataFeatureType="transcript")
-      transcriptsUse = rownames(seqAnno)[seqAnno$type %in% param$transcriptTypes]
-      require(data.table)
-      require(stringr)
-      gtf <- ezReadGff(param$ezRef@refFeatureFile)
-      transcripts <- ezGffAttributeField(gtf$attributes,
-                                         field="transcript_id", 
-                                         attrsep="; *", valuesep=" ")
-      gtf = gtf[transcripts %in% transcriptsUse, ]
-      write.table(gtf, gtfFile, quote=FALSE, sep="\t", 
-                  row.names=FALSE, col.names=FALSE)
-    } else {
-      file.copy(from=param$ezRef@refFeatureFile, to=gtfFile)
-    }
-    
-    if(ezIsSpecified(param$controlSeqs)){
-      ## control sequences
-      extraGR <- makeExtraControlSeqGR(param$controlSeqs)
-      gtfExtraFn <- tempfile(pattern="extraSeqs", tmpdir=getwd(),
-                             fileext = ".gtf")
-      on.exit(file.remove(gtfExtraFn), add=TRUE)
-      export.gff2(extraGR, con=gtfExtraFn)
-      ezSystem(paste("cat", gtfExtraFn, ">>", gtfFile))
-    }
-    
-    countResult = featureCounts(localBamFile, annot.inbuilt=NULL,
-                                annot.ext=gtfFile, isGTFAnnotationFile=TRUE,
-                                GTF.featureType=param$gtfFeatureType,
-                                GTF.attrType=switch(param$featureLevel,
-                                                    "gene"="gene_id",
-                                                    "transcript"="transcript_id",
-                                                    "isoform"="transcript_id",
-                                                    stop("unsupported feature level: ", param$featureLevel)),
-                                useMetaFeatures=param$useMetaFeatures,
-                                allowMultiOverlap=param$allowMultiOverlap,
-                                isPairedEnd=param$paired, 
-                                requireBothEndsMapped=FALSE,
-                                checkFragLength=FALSE,minFragLength=50,
-                                maxFragLength=600,
-                                nthreads=param$cores,
-                                strandSpecific=switch(param$strandMode, "both"=0, "sense"=1, "antisense"=2, stop("unsupported strand mode: ", param$strandMode)),
-                                minMQS=param$minMapQuality,
-                                readExtension5=0,readExtension3=0,read2pos=NULL,
-                                minOverlap=param$minFeatureOverlap,
-                                ignoreDup=param$ignoreDup,
-                                splitOnly=FALSE,
-                                countMultiMappingReads=param$keepMultiHits,
-                                fraction=param$keepMultiHits & !param$countPrimaryAlignmentsOnly,
-                                primaryOnly=param$countPrimaryAlignmentsOnly,
-                                countChimericFragments=TRUE,chrAliases=NULL,
-                                reportReads=NULL,
-                                byReadGroup=ifelse(hasRG, TRUE, FALSE))
+
+  gtfFile = paste(Sys.getpid(), "genes.gtf", sep="-")
+  on.exit(file.remove(gtfFile), add=TRUE)
+  if (ezIsSpecified(param$transcriptTypes)){
+    export.gff2(gtfByTxTypes(param, param$transcriptTypes),
+                con=gtfFile)
+  } else {
+    file.copy(from=param$ezRef@refFeatureFile, to=gtfFile)
   }
+    
+  if(ezIsSpecified(param$controlSeqs)){
+    ## control sequences
+    extraGR <- makeExtraControlSeqGR(param$controlSeqs)
+    gtfExtraFn <- tempfile(pattern="extraSeqs", tmpdir=getwd(),
+                           fileext = ".gtf")
+    on.exit(file.remove(gtfExtraFn), add=TRUE)
+    export.gff2(extraGR, con=gtfExtraFn)
+    ezSystem(paste("cat", gtfExtraFn, ">>", gtfFile))
+  }
+    
+  countResult = featureCounts(localBamFile, annot.inbuilt=NULL,
+                              annot.ext=gtfFile, isGTFAnnotationFile=TRUE,
+                              GTF.featureType=param$gtfFeatureType,
+                              GTF.attrType=switch(param$featureLevel,
+                                                  "gene"="gene_id",
+                                                  "transcript"="transcript_id",
+                                                  "isoform"="transcript_id",
+                                                  stop("unsupported feature level: ", param$featureLevel)),
+                              useMetaFeatures=param$useMetaFeatures,
+                              allowMultiOverlap=param$allowMultiOverlap,
+                              isPairedEnd=param$paired, 
+                              requireBothEndsMapped=FALSE,
+                              checkFragLength=FALSE,minFragLength=50,
+                              maxFragLength=600, nthreads=param$cores,
+                              strandSpecific=switch(param$strandMode, "both"=0, 
+                                                    "sense"=1, "antisense"=2, 
+                                                    stop("unsupported strand mode: ", param$strandMode)),
+                              minMQS=param$minMapQuality,
+                              readExtension5=0,readExtension3=0,read2pos=NULL,
+                              minOverlap=param$minFeatureOverlap,
+                              ignoreDup=param$ignoreDup, splitOnly=FALSE,
+                              countMultiMappingReads=param$keepMultiHits,
+                              fraction=param$keepMultiHits & !param$countPrimaryAlignmentsOnly,
+                              primaryOnly=param$countPrimaryAlignmentsOnly,
+                              countChimericFragments=TRUE,chrAliases=NULL,
+                              reportReads=NULL,
+                              byReadGroup=ifelse(hasRG, TRUE, FALSE))
   
   ## The count matrix from featurecounts has colnames messed up
   ## recover them here
@@ -335,28 +275,20 @@ ezMethodSingleCellFeatureCounts <- function(input=NA, output=NA, param=NA){
                                                  names(fixNameMapping)[indexStartNumber])
   colnames(countsFixed) <- fixNameMapping[colnames(countsFixed)]
   
+  ## To fix another bug introduced by featureCounts: first RG is the filename
+  stopifnot(sum(is.na(colnames(countsFixed))) <= 1)
+  if(any(is.na(colnames(countsFixed)))){
+    colnames(countsFixed)[is.na(colnames(countsFixed))] <- head(sort(tagsRG))[1]
+  }
+  
   ## wirteMM doesn't hold the colnames and rownames in mtx
   # ezWrite.table(countsFixed, head=paste0(param$featureLevel, "_id"),
   #               file=outputFile)
   writeSCMM(countsFixed, file=outputFile)
   ezWrite.table(countResult$stat, file=statFile, row.names=FALSE)
   
-  # Determine cell cycle phases. The training data is only available for Hsap and Mmus Ensembl
-  trainData = NULL
-  if (startsWith(param$refBuild, "Homo_sapiens/Ensembl")) {
-    trainData = readRDS(system.file("exdata", "human_cycle_markers.rds", 
-                                    package = "scran", mustWork=TRUE))
-  } else if (startsWith(param$refBuild, "Mus_musculus/Ensembl")) {
-    trainData = readRDS(system.file("exdata", "mouse_cycle_markers.rds", 
-                                    package = "scran", mustWork=TRUE))
-  }
-  if (!is.null(trainData)) {
-    cellCycleData = scran::cyclone(countResult$counts, trainData)
-    cellPhase = data.frame(Name = colnames(countResult$counts),
-                           Phase = cellCycleData$phases)
-    write.table(cellPhase, file = basename(output$getColumn('CellCyclePhase')),
-                quote = F, sep = "\t", row.names = F)
-  }
+  cellPhase <- getCellCycle(countsFixed, param$refBuild)
+  write_tsv(cellPhase, path=basename(output$getColumn('CellCyclePhase')))
   
   return("Success")
 }

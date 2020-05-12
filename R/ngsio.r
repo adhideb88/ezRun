@@ -29,25 +29,26 @@ loadCountDataset <- function(input, param){
                              paste0("'", colnames(x1), "'", collapse="<br>"),
                              "<br>Set the option columnName to one of the names above!")))
   }
-  identifier <- colnames(x1)[1]
+  identifier <- 1 #colnames(x1)[1]
   
   x <- mapply(function(x, y){
     message("loading file: ", x)
-    tempTibble <- read_tsv(x, progress=FALSE, guess_max=1e6) %>%
-      select(identifier, columnName) %>%
-      rename(!! y := columnName)
+    tempTibble <- read_tsv(x, progress=FALSE, guess_max=1e6)
+    #stopifnot(setequal(pull(tempTibble[1]), pull(x1[1])))
+    tempTibble %>%
+      dplyr::select(identifier, columnName) %>%
+      dplyr::rename("id":= 1, !! y := columnName)
   }, files, names(files), SIMPLIFY=FALSE)
-  
-  x <- Reduce(function(x,y){left_join(x, y, by=identifier)}, x)
+  x <- Reduce(function(x,y){left_join(x, y, by="id")}, x)
   
   if(dataFeatureLevel == "isoform" && param$featureLevel == "gene"){
     ## aggregate from isoform to gene level
-    seqAnnoDFData <- ezFeatureAnnotation(param, pull(x[identifier]), 
+    seqAnnoDFData <- ezFeatureAnnotation(param, pull(x["id"]), 
                                          dataFeatureLevel)
     stopifnot(identical(seqAnnoDFData$transcript_id, x[[identifier]]))
     
     x$gene_id <- seqAnnoDFData$gene_id
-    x <- select(x, -identifier) %>% group_by(gene_id) %>% 
+    x <- select(x, -id) %>% group_by(gene_id) %>% 
       summarise_all(funs(sum))
     ## TODO: consider using rowsum()
   }
@@ -64,13 +65,15 @@ loadCountDataset <- function(input, param){
                                    gene_name=rownames(signal),
                                    type="protein_coding",
                                    strand="*",
-                                   seqid=NA,
+                                   seqid=1,
                                    biotypes="protein_coding",
                                    description=rownames(signal),
-                                   start=NA, end=NA, gc=NA, featWidth=NA,
+                                   start=1, end=100, gc=NA, featWidth=NA,
                                    "GO BP"="", "GO CC"="", "GO MF"="")
-    x1 <- rename(x1, gene_id=GeneID, seqid=Chr, start=Start, end=End,
+    if(any(colnames(x1) %in% c('GeneID', 'Chr', 'Start', 'End', 'Strand'))){
+      x1 <- rename(x1, gene_id=GeneID, seqid=Chr, start=Start, end=End,
                  strand=Strand)
+    }
     colsInData <- intersect(colnames(seqAnnoDFFeature), colnames(x1))
     if(length(colsInData) > 0){
       seqAnnoDFFeature[ ,colsInData] <- x1[ ,colsInData]
@@ -140,15 +143,24 @@ loadSCCountDataset <- function(input, param){
   dataFeatureLevel <- unique(input$getColumn("featureLevel"))
   stopifnot(length(dataFeatureLevel) == 1)
   
-  if(param$scProtocol == "smart-Seq2"){
+  if(toupper(param$scProtocol) == "SMART-SEQ2"){
     countMatrixFn <- input$getFullPaths("CountMatrix")
     if(file_ext(countMatrixFn) == "mtx"){
       countMatrix <- readSCMM(countMatrixFn)
     }else if(file_ext(countMatrixFn) == "txt"){
       countMatrix <- Matrix(as.matrix(ezRead.table(countMatrixFn)))
     }
-    cellDataSet <- ezRead.table(input$getFullPaths("CellDataset"))
-
+    cellDataSet <- ezRead.table(sub("-counts\\.mtx$", "-dataset.tsv",
+                                    countMatrixFn))
+    
+    cellCycleFn <- sub("-counts\\.mtx$", "-CellCyclePhase.txt",
+                       countMatrixFn)
+    if(file.exists(cellCycleFn)){
+      ## TODO: remove this test as CellCyclePhase file should always exist
+      cellCycle <- ezRead.table(cellCycleFn)
+      cellDataSet$CellCycle <- cellCycle[rownames(cellDataSet), "Phase"]
+    }
+    
     ## TODO: this is a temporary solution to fix the discrepency of sample names
     if(!setequal(colnames(countMatrix), rownames(cellDataSet))){
       ## fix the colnames in countMatrix
@@ -180,11 +192,22 @@ loadSCCountDataset <- function(input, param){
                                 metadata=list(isLog=FALSE,
                                               featureLevel=dataFeatureLevel,
                                               type="Counts", param=param))
-  }else if(param$scProtocol == "10x"){
+  }else if(toupper(param$scProtocol) == "10X"){
     countMatrixFn <- list.files(path=input$getFullPaths("CountMatrix"),
                                 pattern="\\.mtx(\\.gz)*$", recursive=TRUE, 
                                 full.names=TRUE)
     sce <- read10xCounts(dirname(countMatrixFn), col.names=TRUE)
+    cellCycleFn <- list.files(path=input$getFullPaths("CountMatrix"),
+                              pattern="CellCyclePhase\\.txt$", recursive=TRUE,
+                              full.names=TRUE)
+    if(length(cellCycleFn) == 1){ 
+      ## TODO: remove this test as CellCyclePhase file should always exist
+      cellCycle <- ezRead.table(cellCycleFn)
+      colData(sce)$CellCycle <- cellCycle[colnames(sce), "Phase"]
+      colData(sce)$CellCycleG1 <- cellCycle[colnames(sce), "G1"]
+      colData(sce)$CellCycleS <- cellCycle[colnames(sce), "S"]
+      colData(sce)$CellCycleG2M <- cellCycle[colnames(sce), "G2M"]
+    }
     seqAnnoDF <- ezFeatureAnnotation(param, rownames(sce),
                                      dataFeatureLevel)
     seqAnno <- makeGRangesFromDataFrame(seqAnnoDF, keep.extra.columns=TRUE)
@@ -196,16 +219,16 @@ loadSCCountDataset <- function(input, param){
   
   if (ezIsSpecified(param$transcriptTypes)){
     use = seqAnno$type %in% param$transcriptTypes
-  } else {
-    use = TRUE
+    sce <- sce[use, ]
   }
-  sce <- sce[use, ]
   
   if (dataFeatureLevel == "isoform" && param$featureLevel == "gene"){
     sce <- aggregateCountsByGene(sce)
   }
-  
+  ## unique cell names when merging two samples
   colnames(sce) <- paste(input$getNames(), colnames(sce), sep="___")
+  
+  colData(sce)$Batch <- input$getNames()
   
   return(sce)
 }
@@ -344,4 +367,34 @@ readSCMM <- function(file){
   colnames(ans) <- read_lines(sub("\\.mtx$", ".colNames", file))
   rownames(ans) <- read_lines(sub("\\.mtx$", ".rowNames", file))
   return(ans)
+}
+
+saveExternalFiles = function(sce, ...) {
+  tr_cnts <- expm1(logcounts(sce))
+  geneMeans <- rowsum(t(as.matrix(tr_cnts)), group=colData(sce)[,"ident"])
+  geneMeans <- sweep(geneMeans, 1, STATS=table(colData(sce)[,"ident"])[rownames(geneMeans)], FUN="/")
+  geneMeans <- log1p(t(geneMeans))
+  colnames(geneMeans) <- paste("cluster", colnames(geneMeans), sep="_")
+  geneMeanPerClusterFn = "gene_means_per_cluster.txt"
+  ezWrite.table(geneMeans, geneMeanPerClusterFn)
+  
+  geneMeans <- Matrix::rowMeans(tr_cnts)
+  geneMeans <- log1p(geneMeans)
+  geneMeansFn = "gene_means.txt"
+  ezWrite.table(geneMeans, geneMeansFn)
+  
+  tSNE_data <- as_tibble(reducedDims(sce)$TSNE,
+                         rownames="cells")
+  tSNE_data <- dplyr::rename(tSNE_data, X=`tSNE_1`, Y=`tSNE_2`)
+  tSNE_data$cluster <- colData(sce)[,"ident"]
+  tSNEFn = "tSNE_data.tsv"
+  write_tsv(tSNE_data, path=tSNEFn)
+  
+  add_results = list(...)
+  for(i in 1:length(add_results[[1]])) {
+    if(!is.null(add_results[[1]][[i]])) {
+      file_name = names(add_results[[1]][i])
+      write_tsv(add_results[[1]][[i]], path=paste0(file_name, ".tsv"))
+    }
+  }
 }

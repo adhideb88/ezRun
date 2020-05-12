@@ -28,6 +28,15 @@ ezMethodFastQC = function(input=NA, output=NA, param=NA,
   dataset = input$meta
   samples = rownames(dataset)
   
+  if(sum(dataset$`Read Count`) > 1e9){
+    doSubsample <- TRUE # subsample to 1Mio reads
+    input <- ezMethodSubsampleFastq(input=input, param=param)
+    dataset = input$meta
+  }else{
+    doSubsample <- FALSE
+  }
+  
+  
   files = c()
   for (sm in samples){
     files[paste0(sm, "_R1")] = input$getFullPaths("Read1")[sm]
@@ -99,7 +108,10 @@ ezMethodFastQC = function(input=NA, output=NA, param=NA,
   
   ## Each sample can have different number of reports.
   ## Especially per tile sequence quality
-  nrReports <- sapply(reportDirs, function(x){smy = ezRead.table(file.path(x, "summary.txt"), row.names=NULL, header=FALSE);nrow(smy)})
+  nrReports <- sapply(reportDirs, 
+                      function(x){smy = ezRead.table(file.path(x, "summary.txt"), 
+                                                     row.names=NULL, header=FALSE);
+                      nrow(smy)})
   i <- which.max(nrReports)
   smy = ezRead.table(file.path(reportDirs[i], "summary.txt"), 
                      row.names=NULL, header=FALSE)
@@ -124,7 +136,7 @@ ezMethodFastQC = function(input=NA, output=NA, param=NA,
     # }
     href = paste0(reportDirs[i], "/fastqc_report.html#M", 
                   0:(ncol(tbl)-1))[colnames(tbl) %in% smy[[2]]]
-    img = paste0(reportDirs[i], 	"/Icons/", statusToPng[smy[[1]]])
+    img = paste0(reportDirs[1], 	"/Icons/", statusToPng[smy[[1]]]) ##
     tbl[i, colnames(tbl) %in% smy[[2]]] = paste0("<a href=", href, 
                                                  "><img src=", img, "></a>")
   }
@@ -146,8 +158,13 @@ ezMethodFastQC = function(input=NA, output=NA, param=NA,
   rmarkdown::render(input="FastQC.Rmd", envir = new.env(),
                     output_dir=".", output_file=htmlFile, quiet=TRUE)
   
+  prepareRmdLib()
+  
+  ## generate multiQC report
+  ezSystem("multiqc .")
+  
   ## Cleaning
-  if(isTRUE(isUBam)){
+  if(isTRUE(isUBam) || isTRUE(doSubsample)){
     file.remove(files)
   }
   unlink(paste0(reportDirs, ".zip"), recursive = TRUE)

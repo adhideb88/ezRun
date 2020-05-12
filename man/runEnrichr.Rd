@@ -4,8 +4,15 @@
 \alias{runEnrichr}
 \title{Run Enrichr}
 \usage{
-runEnrichr(genes, minScore = 12, maxAdjP = 0.01, minOverlapGenes = 3,
-  softFilter = F, maxResult = NA, connectionN = 10)
+runEnrichr(
+  genes,
+  minScore = 12,
+  maxAdjP = 0.01,
+  minOverlapGenes = 3,
+  softFilter = F,
+  maxResult = NA,
+  connectionN = 10
+)
 }
 \arguments{
 \item{genes}{A list or vector containing gene names}
@@ -54,7 +61,7 @@ addResp <- enrichrAddList(genes)
 names(addResp)
 # [1] "shortId"    "userListId"
 # This will check all libraries specified in the internal list (extdata/enrichr_libnames.txt)
-res <- enrichrEnrich(genes)
+res <- enrichrEnrich(addResp$userListId)
 # Check if any requests failed
 if (length(res$failure) > 0) {
   cat(length(res$failure), " requests failed")

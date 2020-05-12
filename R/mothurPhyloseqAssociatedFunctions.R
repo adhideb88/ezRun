@@ -12,12 +12,13 @@
 ##' @param  a data frame in the format of mothur shared clustered OTU  files.
 ##' @return Returns a Phyloseq OTU object.
 
-phyloSeqOTU <- function(otuDF){
-rownames(otuDF) <- otuDF$Group
-colToDrop <- c("Group")
-otuFile1 <- as.matrix(otuDF[,!names(otuDF)%in%colToDrop])
-otuObject <- otu_table(otuFile1, taxa_are_rows = FALSE)
-return(otuObject)
+phyloSeqOTUFromFile <- function(otuFile){
+  otuDF <- read.delim(otuFile, header = T,stringsAsFactors = F, check.names = F)
+  rownames(otuDF) <- otuDF$Group
+  colToDrop <- c("Group","label","numOtus")
+  otuFile1 <- as.matrix(otuDF[,!names(otuDF)%in%colToDrop])
+  otuObject <- otu_table(otuFile1, taxa_are_rows = FALSE)
+  return(otuObject)
 }
 
 ###################################################################
@@ -33,13 +34,14 @@ return(otuObject)
 ##' @param  taxaDB, a DF in the format of mothur taxonomy file.
 ##' @return Returns a Phyloseq Taxa object.
 
-phyloSeqTaxa <- function(taxaDB){
-tempList <- lapply(taxaDB$Taxonomy,function(y) unlist(strsplit(y,";")))
-taxaMatrix <- as.matrix(ldply(tempList))
-rownames(taxaMatrix) <- taxaDB$OTU
-colnames(taxaMatrix) <- c("Domain","Phylum","Class","Order","Family","Genus","Species")[1:(ncol(taxaMatrix))]
-taxaObject <- tax_table(taxaMatrix)
-return(taxaObject)
+phyloSeqTaxaFromFile  <- function(taxaFile){
+  taxaDB <- read.delim(taxaFile, header = T,stringsAsFactors = F)
+  tempList <- lapply(taxaDB$Taxonomy,function(y) unlist(strsplit(y,";")))
+  taxaMatrix <- as.matrix(ldply(tempList))
+  rownames(taxaMatrix) <- taxaDB$OTU
+  colnames(taxaMatrix) <- c("Kingdom","Phylum","Class","Order","Family","Genus","Species")[1:(ncol(taxaMatrix))]
+  taxaObject <- tax_table(taxaMatrix)
+  return(taxaObject)
 }
 
 ###################################################################
@@ -74,19 +76,13 @@ return(sampleObject)
 ##' @description Preprocesses a phyloseq object.
 ##' @param  phyloseqObj, a phyloseq object.
 ##' @return Returns a  filtered Phyloseq  object.
-phyloSeqPreprocess <- function(phyloseqObj){
-  GPfr <- phyloseqObj
-  ## Standardize abundances to the median sequencing depth
- # total = median(sample_sums(phyloseqObj))
- # standf = function(x, t=total) round(t * (x / sum(x)))
-#  gps = transform_sample_counts(phyloseqObj, standf)
-#  ## transformed to relative abundance and filtered by abundance
-#  GPr  = transform_sample_counts(gps, function(x) x / sum(x) )
-#  GPfr = filter_taxa(GPr, function(x) mean(x) > 1e-5, TRUE)
-  filteredPhyloseqObj = filter_taxa(GPfr, function(x) sum(x > 3*1e-5) > (0.2*length(x)), TRUE)
-  filteredPhyloseqObj = subset_taxa(filteredPhyloseqObj, Domain=="Bacteria")
- # filteredPhyloseqObj = subset_taxa(GPfr, Domain=="Bacteria")
-  return(filteredPhyloseqObj)
+phyloSeqPreprocess <- function(phyloseqObj,rawCount,sampleFraction){
+  ### First remove taxa not seen at least rowCount times in at least sampleFraction of the samples
+filteredTaxa <- filter_taxa(phyloseqObj, function(x) sum(x > rawCount) > (sampleFraction*length(x)), TRUE)
+  ### then remove samples which have zero observations
+samplesToKeep <- which(apply(otu_table(filteredTaxa),1,sum)>0)
+filteredTaxaAndSamples <- prune_samples(names(samplesToKeep),filteredTaxa)
+  return(filteredTaxaAndSamples)
 }
 
 ###################################################################
@@ -101,60 +97,79 @@ phyloSeqPreprocess <- function(phyloseqObj){
 ##' @description Comaprison of metagenomics communities from files stored as a phyloseq object.
 ##' @param  phyloseqObj, a phyloseq object.
 ##' @return Returns a list of tables and plots.
-phyloSeqToDeseq2_tableAndPlots <- function(phyloseqObj){
+phyloSeqToDeseq2_tableAndPlots <- function(phyloseqObj,rank,group,sampleGroup,refGroup){
   ## Convert to Deseq obj and analyze
   ## to do: add selector for group and test
-  phyloseqObjNoMock <- prune_samples(sample_data(phyloseqObj)$Group != "Mock", phyloseqObj)
-  phyloseq_to_deseq2 = phyloseq_to_deseq2(phyloseqObjNoMock, ~ Group)
-  DEseqPhyRes <- DESeq(phyloseq_to_deseq2, test="Wald", fitType="parametric")
-  res = results(DEseqPhyRes, cooksCutoff = FALSE)
-  addTaxa <- cbind(data.frame(res),t(otu_table(phyloseqObjNoMock)), tax_table(phyloseqObjNoMock))
-  addTaxaOut <- cbind(data.frame(res),t(otu_table(phyloseqObjNoMock)), tax_table(phyloseqObjNoMock))
+  phyloseqObjNoMock <- prune_samples(sample_data(phyloseqObj)[[group]] != "Mock", phyloseqObj)
+  phyloseqToDeseq2Obj = phyloseq_to_deseq2(phyloseqObjNoMock,  as.formula(paste0("~",group)))
+  gm_mean = function(x, na.rm=TRUE){
+    exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+  }
+  geoMeans = apply(counts(phyloseqToDeseq2Obj), 1, gm_mean)
+  phyloseqToDeseq2Obj = estimateSizeFactors(phyloseqToDeseq2Obj, geoMeans = geoMeans)
+  DEseqPhyRes <- DESeq(phyloseqToDeseq2Obj, test="Wald", fitType="parametric")
+  res = results(DEseqPhyRes, cooksCutoff = FALSE,contrast = c(group,sampleGroup,refGroup))
+  otuObj <- data.frame(t(otu_table(phyloseqObjNoMock)@.Data), check.names = F, stringsAsFactors = F)
+  taxObj <-  data.frame(tax_table(phyloseqObjNoMock)@.Data, check.names = F,stringsAsFactors = F)
+  taxObj[is.na(taxObj)] = "NA"
+  addTaxaOut <- cbind(data.frame(res),otuObj,taxObj)
+  addTaxaOut <- addTaxaOut[!is.na(addTaxaOut$Kingdom) & !is.na(addTaxaOut$padj),]
+  addTaxaOut$id <- paste0("otu",seq(1,nrow(addTaxaOut)))
   addTaxaOut <- addTaxaOut[order(addTaxaOut$padj),]
-  addTaxaOut <- head(addTaxaOut,20)
-  colsToKeep <- grep("baseMean|lfcSE", colnames(addTaxaOut), invert = T)
-  addTaxaOut <- addTaxaOut[,colsToKeep]
-  ## sort and prepare fpr plot
-  x = tapply(addTaxa$log2FoldChange, addTaxa$Phylum, function(x) max(x))
-  x = sort(x, TRUE)
-  addTaxa$Phylum = factor(as.character(addTaxa$Phylum), levels=names(x))
-  # Genus order
-  x = tapply(addTaxa$log2FoldChange, addTaxa$Genus, function(x) max(x))
-  x = sort(x, TRUE)
-  addTaxa$Genus = factor(as.character(addTaxa$Genus), levels=names(x))
-  addTaxa <- na.omit(addTaxa)
+  colsToKeep <- grep("baseMean|lfcSE", colnames(addTaxaOut), invert = T, value = T)
+  addTaxa <- addTaxaOut[,colsToKeep]
+  ## select fields to report in the table
+  colsToRemove <- rownames(sample_data(phyloseqObjNoMock))
+  colsToReport <- !colsToKeep%in%colsToRemove
+  tableToReport <- addTaxa[1:20,colsToReport]
+  
+  ##
   addTaxa$Significance <- "Significant"
   addTaxa[addTaxa$padj > 0.05,]$Significance <- "nonSignificant"
   addTaxa$Significance <- as.factor(addTaxa$Significance)
   addTaxa$Significance <- factor(addTaxa$Significance, levels = rev(levels(addTaxa$Significance)))
+  ## sort and prepare fpr plot
+  x = tapply(addTaxa$log2FoldChange, addTaxa[[rank]], function(x) max(x))
+  x = sort(x, TRUE)
   ### log2fold plot
   title <- "Abundance changes between the groups"
-  plotLogFoldVsTaxon <- ggplot(addTaxa, aes(x=Genus, y=log2FoldChange, color=Phylum)) + 
-    geom_point(size=3) + 
-    theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5)) +
-    geom_hline(aes(yintercept=1),color="red") + geom_text(aes(1,1,label = 1, vjust = -1), color = "red", size =3) + 
-    geom_hline(aes(yintercept=-1),color="red") + geom_text(aes(1,-1,label = -1, vjust = 1), color = "red", size =3)
+  plotLogFoldVsTaxon <- ggplot(addTaxa, aes(x=addTaxa[[rank]], y=log2FoldChange, color=addTaxa[[rank]])) + 
+    geom_violin() + geom_point(size=3) +
+    theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5), axis.title.x = element_blank()) +
+    geom_hline(aes(yintercept=1),color="blue")  + 
+    geom_hline(aes(yintercept=-1),color="blue") 
   plotLogFoldVsTaxon <- plotLogFoldVsTaxon + labs(title=title) + 
-    theme(plot.title=element_text(size=10, face="bold",hjust=0.5))
+    theme(plot.title=element_text(size=10,hjust=0.5)) + labs(color=rank)
+  plotLogFoldVsTaxon <- plotLogFoldVsTaxon +guides(color = guide_legend(nrow = 10))
   ### volcano plot
-  title <- "Volcano plot (padj  = 0.05)"
+  title <- "Volcano plot (p-value threshold  = 0.05)"
   volcanoPlot <- ggplot(addTaxa, aes(y=-log10(pvalue), x=log2FoldChange)) +
-    geom_point(aes(shape=Significance, color=Phylum),size=3) 
+    geom_point(aes(shape=Significance, color=addTaxa[[rank]]),size=3) 
   volcanoPlot <- volcanoPlot + labs(title=title) + 
-    theme(plot.title=element_text(size=10, face="bold",hjust=0.5))
+    theme(plot.title=element_text(size=10,hjust=0.5))
+  volcanoPlot <- volcanoPlot + geom_hline(yintercept=1.3, color="blue") + labs(color=rank)
   ### Diff.expr. pie chart
-  OTUsToPlot <- na.omit(addTaxaOut[addTaxaOut$padj < 0.05,])
-  tableTaxa <- data.frame(table(droplevels(OTUsToPlot[,"Genus"])))
-  colnames(tableTaxa)[1] <- "Genus"
+  OTUsToPlot <- addTaxa[addTaxa$Significance == "Significant",]
+  isAllNa <- all(names(table(OTUsToPlot[[rank]])) == "NA")
+  if (isAllNa){
+    isAllNaMsg <- paste("No differentially abundant  OTUs are annotated to the rank",rank, ". No pie chart to plot.")
+    finalVersionPie <- NULL
+  } else {
+    isAllNaMsg <- NULL
+  OTUsToPlot[[rank]]  <- as.factor(OTUsToPlot[[rank]])
+  tableTaxa <- data.frame(table(droplevels(OTUsToPlot[,rank])))
+  colnames(tableTaxa)[1] <- rank
   pct <- round(tableTaxa$Freq/sum(tableTaxa$Freq)*100,2)
   pct = paste0(pct,"%")
-  titleText = "Differentially abundant genera"
-  bp <- ggplot(tableTaxa, aes(x="", y=Freq, fill=Genus)) + 
+  titleText = paste("Distribution of differentially abundant taxa at rank", rank,".")
+  bp <- ggplot(tableTaxa, aes(x="", y=Freq, fill=tableTaxa[[rank]])) + 
     geom_bar(position = position_stack(),width = 1, stat = "identity") 
   pieVersion <- bp + coord_polar("y", start=0)
   finalVersionPie <- pieVersion +  labs(title=titleText, y="") + 
-    theme(plot.title=element_text(size=10, face="bold",hjust=0.5))
-  return(list(logPlot=plotLogFoldVsTaxon,vPlot=volcanoPlot,pieChart=finalVersionPie,table=addTaxaOut))
+    theme(plot.title=element_text(size=10,hjust=0.5)) + labs(fill=rank)
+  }
+  return(list(logPlot=plotLogFoldVsTaxon,vPlot=volcanoPlot,pieChart=finalVersionPie,tableToReport=tableToReport,
+              fullTable=addTaxa,isAllNaMsg=isAllNaMsg,isAllNa=isAllNa))
 }
 
 ###################################################################
@@ -189,7 +204,7 @@ phyloSeqDivPlotAndPercUnclassified <- function(taxaFileName, rank){
     scale_fill_manual(values=colRain)
   pieVersion <- bp + coord_polar("y", start=0)
   finalVersion <- pieVersion +  labs(title=titleText, subtitle=subtitleText, y="") + 
-    theme(legend.position="none",plot.title=element_text(size=15, face="bold",hjust=0.5),  
+    theme(legend.position="none",plot.title=element_text(size=15,hjust=0.5),  
           plot.subtitle=element_text(size=10, face="bold",hjust=0.5))
   return(finalVersion)
 }
@@ -243,9 +258,18 @@ phyloSeqCommunityComp <- function(physeq){
 ##' @return Returns an MDS   plot.
 ##' 
 ### PCA plot function
-pcaForPhylotseqPlot <- function(input,groups){
+pcaForPhyloseqPlot <- function(phySeqObject,type,group){
   ## calculate MDS values
-  input <- t(input)
+  if (type =="samples") {
+    input <- t(phySeqObject@otu_table@.Data)
+    groups <- phySeqObject@sam_data[[group]]
+  }else if (type =="taxa"){
+    input <- phySeqObject@otu_table@.Data
+    groups <- as.vector(phySeqObject@tax_table@.Data)
+  } else {
+    stop("type must be either samples or taxa")
+  }
+
   mds = plotMDS(log2(input+10), plot=FALSE, ndim=2)
   ggg <- data.frame(comp1 = mds$cmdscale.out[,1] ,comp2 = mds$cmdscale.out[,2], group = groups)
   
@@ -258,92 +282,12 @@ pcaForPhylotseqPlot <- function(input,groups){
   yAxisLabel <- paste0("PC2 (", PC2varExpl ,"% explained var.)")
   
   ## plot
-  g <- ggplot(ggg, aes(comp1,comp2, group = group)) + geom_point(aes(colour = group),size =3)
+  g <- ggplot(ggg, aes(comp1,comp2, group = ggg[[group]])) + geom_point(aes(colour = ggg[[group]]),size =3)
   g <- g + xlab(xAxisLabel) + ylab(yAxisLabel)
   plot(g)
 }
 
-###################################################################
-# Functional Genomics Center Zurich
-# This code is distributed under the terms of the GNU General
-# Public License Version 3, June 2007.
-# The terms are available here: http://www.gnu.org/licenses/gpl.html
-# www.fgcz.ch
 
-
-##' @title  Alternative heatmap plot for phyloseq abundnce-taxonimy matrix  
-##' @description Alternative heatmap plot for phyloseq abundnce-taxonimy matrix  
-##' @param   a phyloseq object and the rank to summarize
-##' @return Returns a stacked bar  plot.
-##' 
-### Heatmap function
-heatmapForPhyloseqPlot <- function(phyloseqOtuObj){
-  plot_heatmap <- function() {
-    ## clust funct
-  distCor <- function(x) {as.dist(1-cor(x))}
-  zClust <- function(x, scale="row", zlim=c(-3,3), method="average") {
-    if (scale=="row") z <- t(scale(t(x)))
-    if (scale=="col") z <- scale(x)
-    z <- pmin(pmax(z, zlim[1]), zlim[2])
-    hcl_row <- hclust(distCor(t(z)), method=method)
-    hcl_col <- hclust(distCor(z), method=method)
-    return(list(data=z, hcl_r=hcl_row,hcl_c=hcl_col, 
-                Rowv=as.dendrogram(hcl_row), Colv=as.dendrogram(hcl_col)))
-  }
-  z <- zClust(t(phyloseqOtuObj))
-  cols <- colorRampPalette(brewer.pal(10, "RdBu"))(256)
-  ## heatmap
-    heatmap.2(z$data,dendrogram=c("col"),Rowv=FALSE,Colv=z$Colv,col=rev(cols), 
-              trace='none',density.info=c("none"),keysize = 0.8, 
-              labRow=NA,cexCol = 1)
-  }
-}
-
-
-###################################################################
-# Functional Genomics Center Zurich
-# This code is distributed under the terms of the GNU General
-# Public License Version 3, June 2007.
-# The terms are available here: http://www.gnu.org/licenses/gpl.html
-# www.fgcz.ch
-
-
-##' @title Phyloseq OTU object
-##' @description Create Phyloseq OTU object mothur OTU files.
-##' @param  a data frame in the format of mothur shared clustered OTU  files.
-##' @return Returns a Phyloseq OTU object.
-
-phyloSeqOTUFromFile <- function(otuFile){
-  otuDF <- read.delim(otuFile, header = T,stringsAsFactors = F, check.names = F)
-  rownames(otuDF) <- otuDF$Group
-  colToDrop <- c("Group","label","numOTUs")
-  otuFile1 <- as.matrix(otuDF[,!names(otuDF)%in%colToDrop])
-  otuObject <- otu_table(otuFile1, taxa_are_rows = FALSE)
-  return(otuObject)
-}
-
-###################################################################
-# Functional Genomics Center Zurich
-# This code is distributed under the terms of the GNU General
-# Public License Version 3, June 2007.
-# The terms are available here: http://www.gnu.org/licenses/gpl.html
-# www.fgcz.ch
-
-
-##' @title Phyloseq Taxa object
-##' @description Create Phyloseq taxa object from mothur taxonomy files.
-##' @param  taxaDB, a DF in the format of mothur taxonomy file.
-##' @return Returns a Phyloseq Taxa object.
-
-phyloSeqTaxaFromFile  <- function(taxaFile){
-  taxaDB <- read.delim(taxaFile, header = T,stringsAsFactors = F)
-  tempList <- lapply(taxaDB$Taxonomy,function(y) unlist(strsplit(y,";")))
-  taxaMatrix <- as.matrix(ldply(tempList))
-  rownames(taxaMatrix) <- taxaDB$OTU
-  colnames(taxaMatrix) <- c("Domain","Phylum","Class","Order","Family","Genus","Species")[1:(ncol(taxaMatrix))]
-  taxaObject <- tax_table(taxaMatrix)
-  return(taxaObject)
-}
 
 ###################################################################
 # Functional Genomics Center Zurich
@@ -359,29 +303,353 @@ phyloSeqTaxaFromFile  <- function(taxaFile){
 ##' @return Returns a stacked bar  plot.
 ##' 
 ### Heatmap function
-heatmapForPhylotseqPlotPheatmap <- function(phyloseqOtuObj, matrix){
-    plot_heatmap_Pheatmap <- function() {
-  ## clust funct
-  distCor <- function(x) {as.dist(1-cor(x))}
-  zClust <- function(x, scale="row", zlim=c(-3,3), method="average") {
-    if (scale=="row") z <- t(scale(t(x)))
-    if (scale=="col") z <- scale(x)
-    z <- pmin(pmax(z, zlim[1]), zlim[2])
-    hcl_row <- hclust(distCor(t(z)), method=method)
-    hcl_col <- hclust(distCor(z), method=method)
-    return(list(data=z, hcl_r=hcl_row,hcl_c=hcl_col, 
-                Rowv=as.dendrogram(hcl_row), Colv=as.dendrogram(hcl_col)))
+heatmapForPhylotseqPlotPheatmap <- function(phyloseqOtuObj,areThereMultVar,isGroupThere,rank){
+  input <- data.frame(t(phyloseqOtuObj@otu_table@.Data), check.names = F)
+  taxDF <- data.frame(phyloseqOtuObj@tax_table@.Data)
+  input$rank <- taxDF[[rank]]
+  colToAggregate <- grep("rank",colnames(input), value = T,invert = T)
+  dd <- aggregate(x = input[colToAggregate],by = list(input$rank),sum)
+  rownames(dd) <- dd$Group.1
+  dd <-  subset(dd, select = -c(Group.1))
+  dd <- dd[apply(dd,1,sd)>0,]
+  input <- dd
+  plot_heatmap_Pheatmap <- function() {
+    if (isGroupThere){
+  gr1 <- colnames(sample_data(phyloseqOtuObj))[1]
+  gr2 <- colnames(sample_data(phyloseqOtuObj))[2]
+  fact1 <- as.factor(sample_data(phyloseqOtuObj)@.Data[[1]])
+  fact2 <- as.factor(sample_data(phyloseqOtuObj)@.Data[[2]])
+  nColsGr1 <- nlevels(fact1)
+  nColsGr2 <- nlevels(as.factor(sample_data(phyloseqOtuObj)@.Data[[2]]))
+  pal1 <- colorRampPalette(brewer.pal(11, "Blues"))(nColsGr1)
+  names(pal1) <- levels(fact1)
+  pal2 <- colorRampPalette(brewer.pal(11, "RdYlGn"))(nColsGr2)
+  names(pal2) <- levels(fact2)
+  mat_colors <- list(pal1,pal2)
+  names(mat_colors) <- c(gr1,gr2)
+  mat_col_temp <- data.frame(sample_data(phyloseqOtuObj))
+  mat_col <- data.frame(lapply(mat_col_temp,as.factor), row.names = rownames(mat_col_temp))
+  if (!areThereMultVar){
+    mat_colors <- mat_colors[gr1]
+    mat_col <- data.frame(sample_data(phyloseqOtuObj)[,gr1])
   }
-  z <- zClust(t(phyloseqOtuObj))
-  mat_col <- matrix
-  ncols <- min(3,nlevels(as.factor(mat_col$Group)))
-  mat_colors <- list(group = c("red","blue"))
-  names(mat_colors$group) <- unique(mat_col$Group)
   ## heatmap
-  pheatmap(z$data,show_rownames = FALSE,
+  pheatmap(input,show_rownames = TRUE,
            show_colnames     = TRUE,
            annotation_col    = mat_col,
            annotation_colors = mat_colors,
-           cluster_rows = TRUE,  scale="column", method = "average")
+           cluster_rows = TRUE,  scale="row", method = "average")
+    } else {
+
+      pheatmap(input,show_rownames = TRUE,
+               show_colnames     = TRUE,
+               cluster_rows = TRUE,  scale="row", method = "average")
    }
+  }
+}  
+
+###################################################################
+# Functional Genomics Center Zurich
+# This code is distributed under the terms of the GNU General
+# Public License Version 3, June 2007.
+# The terms are available here: http://www.gnu.org/licenses/gpl.html
+# www.fgcz.ch
+
+
+##' @title OTUs saturation plot
+##' @description HOw many OTUs do we really have?
+##' @param  x, mothur shared abundance  file or already read-in table (dep on sec. param).
+##' @return Returns a grid of plots
+rarefactionPlot <- function(adundDF, type){
+  if (type == 1){
+    yLabel <- "Community saturation"
+  }else{
+    yLabel <- "Community rarefaction"
+  }
+  bb <- iNEXT(adundDF, q=0, datatype="abundance")
+  fortifiedObj <- fortify(bb, type=type) 
+  fortifiedObjPoint <- fortifiedObj[which(fortifiedObj$method=="observed"),]
+  fortifiedObjLine <- fortifiedObj[which(fortifiedObj$method!="observed"),]
+  fortifiedObjLine$method <- factor(fortifiedObjLine$method, 
+                           c("interpolated", "extrapolated"),
+                           c("int", "ext"))
+  saturationPlot <- ggplot(fortifiedObj, aes(x=x, y=y, colour=site)) + 
+    geom_point(aes(shape=site), size=4, data=fortifiedObjPoint) + 
+    scale_shape_manual(values=rep(seq(1,23),3)) +
+    geom_line(aes(linetype=method), lwd=1, data=fortifiedObjLine) +  
+    guides(shape = guide_legend(nrow = 6), linetype= guide_legend(nrow = 2))
+
+  saturationPlot <- saturationPlot + labs(x="Number of OTUs", 
+                                          y=yLabel, 
+                                          shape="Samples", colour="Samples",
+                                          linetype="Method")
+  return(saturationPlot)
+}
+
+###################################################################
+# Functional Genomics Center Zurich
+# This code is distributed under the terms of the GNU General
+# Public License Version 3, June 2007.
+# The terms are available here: http://www.gnu.org/licenses/gpl.html
+# www.fgcz.ch
+
+
+##' @title modified phyloseq barplot
+##' @description Removed stacks border
+##' @param  physeqFullObject (phyloseq object)
+##' @return A ggplot
+plotBarMod <- function(xx, x, fill = NULL, title = NULL, facet_grid = NULL,group) 
+{
+ mdf = psmelt(xx)
+ if (x=="S"){
+   xAxisVar ="Sample"
+ mdf$relFract <- 0
+ for (sample in unique(mdf$Sample)){
+   tot <- sum(mdf[mdf$Sample == sample,]$Abundance)
+ mdf[mdf$Sample == sample,]$relFract <- mdf[mdf$Sample == sample,]$Abundance/tot
+ }
+ }else if (x=="G") { 
+   xAxisVar = group
+   mdf$relFract <- 0
+ for (g in levels(mdf[[group]])){
+   tot <- sum(mdf[mdf[[group]] == g,]$Abundance)
+   mdf[mdf[[group]] == g,]$relFract <-  mdf[mdf[[group]] == g,]$Abundance/tot
+ }
+ }
+ p = ggplot(mdf, aes(x=mdf[[xAxisVar]],y=relFract, fill = mdf[[fill]]))
+ p = p + geom_bar(stat = "identity", position = "stack") + xlab(xAxisVar) +
+   ylab("relative fraction") + labs(fill = fill) + guides(fill = guide_legend(nrow = 12))
+   p = p + theme(axis.text.x = element_text(angle = -90, hjust = 0))
+ if (!is.null(facet_grid)) {
+     p <- p + facet_grid(facet_grid)
+   }
+   if (!is.null(title)) {
+      p <- p + ggtitle(title)
+}
+return(p)
+}
+
+###################################################################
+# Functional Genomics Center Zurich
+# This code is distributed under the terms of the GNU General
+# Public License Version 3, June 2007.
+# The terms are available here: http://www.gnu.org/licenses/gpl.html
+# www.fgcz.ch
+
+##' @title Rank-specific abundance plot
+##' @description Abundance distribution for a specific rank
+##' @param  physeqFullObject (phyloseq object),x (rank)
+##' @return Returns a ggplot
+abundPlot <- function(rank,physeqFullObject,xAesLogic,numTopRanks,group) {
+  naRmoved <- subsetTaxMod(physeqFullObject, rank)
+  if (naRmoved$toStop == TRUE) {
+    return(list(abPlot=NULL,stop=TRUE))
+  }else{
+  naRmovedTrimmed <- subsetRankTopN(naRmoved$pObj, rank,numTopRanks)
+  p <- plotBarMod(naRmovedTrimmed,x=xAesLogic, fill=rank,group=group)  
+  p <- p+  theme(legend.key.size = unit(0.3, "cm"),legend.key.width = unit(0.3,"cm"))
+  return(list(abPlot=p,stop=FALSE))
+}
+}
+###################################################################
+# Functional Genomics Center Zurich
+# This code is distributed under the terms of the GNU General
+# Public License Version 3, June 2007.
+# The terms are available here: http://www.gnu.org/licenses/gpl.html
+# www.fgcz.ch
+
+##' @title Modifed subset taxa
+##' @description Removes NA for a specific rank for better plotting
+##' @param  physeqFullObject (phyloseq object),x (rank)
+##' @return Returns a filtered phyloseqobj
+subsetTaxMod <- function (physeq, x) 
+{
+  if (is.null(tax_table(physeq))) {
+    cat("Nothing subset. No taxonomyTable in physeq.\n")
+    return(physeq)
+  } else {
+    oldMA <- as(tax_table(physeq), "matrix")
+    oldDF <- data.frame(oldMA)
+    newDF <- data.frame(oldDF[!is.na(oldDF[[x]]),])
+    if(nrow(newDF) == 0){
+      return(list(pObj=physeq,toStop=TRUE))
+    } else{
+    colnames(newDF) <- attr(physeq@tax_table@.Data, "dimnames")[[2]]
+    newMA <- as(newDF, "matrix")
+    if (inherits(physeq, "taxonomyTable")) {
+      return(tax_table(newMA))
+    } else {
+      tax_table(physeq) <- tax_table(newMA)
+      return(list(pObj=physeq,toStop=FALSE))
+    }
+  }
+  }
+}
+
+###################################################################
+# Functional Genomics Center Zurich
+# This code is distributed under the terms of the GNU General
+# Public License Version 3, June 2007.
+# The terms are available here: http://www.gnu.org/licenses/gpl.html
+# www.fgcz.ch
+
+##' @title Rank-specific tax-based ordination plot
+##' @description ordination plot for a specific rank
+##' @param  fullObject (phyloseq object),x (rank)
+##' @return Returns a ggplot
+ordPlot <- function(rank,fullObject,type,areThereMultVar,numTopRanks,isGroupThere) {
+  if (type=="taxa"){
+    if (all(is.na(tax_table(fullObject)[,rank]))){
+    naRmovedTrimmedOrd <- ordinate(fullObject, "NMDS", "bray")
+    p1 = plot_ordination(fullObject, naRmovedTrimmedOrd, type = "taxa")    
+    }else{
+    naRmovedTrimmed <- subsetRankTopN(fullObject, rank,numTopRanks)
+    naRmovedTrimmedOrd <- ordinate(naRmovedTrimmed, "NMDS", "bray")
+    p1 = plot_ordination(naRmovedTrimmed, naRmovedTrimmedOrd, type = "taxa", color=rank)
+    }
+  }else if (type=="samples") {
+    GP.ord <- ordinate(fullObject, "NMDS", "bray")
+    if (isGroupThere) {
+      gr1 <- colnames(sample_data(fullObject))[1]
+     if (areThereMultVar){
+     gr2 <- colnames(sample_data(fullObject))[2]
+     p1 = plot_ordination(fullObject, GP.ord, type="samples", color=gr1,shape=gr2)
+     }else{
+     p1 = plot_ordination(fullObject, GP.ord, type="samples", color=gr1) + geom_point(size=6)
+     }
+    }  else {
+      p1 = plot_ordination(fullObject, GP.ord, type="samples") + geom_point(size=6)
+    }
+  } else{
+    stop("type must be either samples or taxa")
+  }
+  return(p1)
+}
+
+###################################################################
+# Functional Genomics Center Zurich
+# This code is distributed under the terms of the GNU General
+# Public License Version 3, June 2007.
+# The terms are available here: http://www.gnu.org/licenses/gpl.html
+# www.fgcz.ch
+
+##' @title Select only top10 rank
+##' @description subset taxa to retain only top10 renks. Useful for plotting
+##' @param  physeqFullObject (phyloseq object),x (rank)
+##' @return A subsetted phyloseq object
+subsetRankTopN <- function(physeqFullObject,rank,N){
+phylAsum = tapply(taxa_sums(physeqFullObject), tax_table(physeqFullObject)[, rank], sum, na.rm=TRUE)
+topN = names(sort(phylAsum, TRUE))[1:N]
+physeqFullObjectTrimmed = prune_taxa((tax_table(physeqFullObject)[, rank] %in% topN), physeqFullObject)
+return(physeqFullObjectTrimmed)
+}
+
+###################################################################
+# Functional Genomics Center Zurich
+# This code is distributed under the terms of the GNU General
+# Public License Version 3, June 2007.
+# The terms are available here: http://www.gnu.org/licenses/gpl.html
+# www.fgcz.ch
+
+##' @title Modified phyloseq richness plot 
+##' @description Modified richness plot to include box plots statistical comparison when groups are present
+##' @param  physeqFullObject (phyloseq object)
+##' @return A ggplot
+groupModRichPlot <- function(physeq, x, color = NULL, shape = NULL, 
+          title = NULL, scales = "free_y", nrow = 1, shsi = NULL, 
+          measures = c("Shannon"), sortby = NULL) 
+{
+  erDF = estimate_richness(physeq, split = TRUE, measures = measures)
+  measures = colnames(erDF)
+  ses = colnames(erDF)[grep("^se\\.", colnames(erDF))]
+  measures = measures[!measures %in% ses]
+  if (!is.null(sample_data(physeq, errorIfNULL = FALSE))) {
+    DF <- data.frame(erDF, sample_data(physeq))
+  }else {
+    DF <- data.frame(erDF)
+  }
+  if (!"samples" %in% colnames(DF)) {
+    DF$samples <- sample_names(physeq)
+  }
+  if (!is.null(x)) {
+    if (x %in% c("sample", "samples", "sample_names", "sample.names")) {
+      x <- "samples"
+    }
+  }else {
+    x <- "samples"
+  }
+  mdf = reshape2::melt(DF, measure.vars = measures)
+  p <- ggplot(mdf,aes(mdf[[x]],value))+ geom_boxplot() +
+    stat_compare_means(method = "wilcox.test",hjust = -0.5, vjust = -0.5) +
+    xlab(x)
+  return(p)
+}
+
+
+###################################################################
+# Functional Genomics Center Zurich
+# This code is distributed under the terms of the GNU General
+# Public License Version 3, June 2007.
+# The terms are available here: http://www.gnu.org/licenses/gpl.html
+# www.fgcz.ch
+
+##' @title Formats ggplot title
+##' @description Centered and right size
+##' @param  p (ggplot), text (title)
+##' @return A plot.grid
+add_centered_title <- function(p, text){
+  grid.arrange(p, ncol = 1, top = text)
+}
+
+###################################################################
+# Functional Genomics Center Zurich
+# This code is distributed under the terms of the GNU General
+# Public License Version 3, June 2007.
+# The terms are available here: http://www.gnu.org/licenses/gpl.html
+# www.fgcz.ch
+
+##' @title Summary plot of chimeras
+##' @description Generate chimera plot from chimera file
+##' @param  a data.frame
+##' @return A ggplot
+chimeraSummaryPlot <- function(chimeraDF){
+bp <- ggplot(chimeraDF, aes(x=Type,Freq, fill=Type)) 
+facetSampleBar <- bp  + geom_bar(stat = "identity",  position = 'dodge') 
+finalVersionChimeraPlot  <- facetSampleBar +   
+  theme(axis.title.x=element_blank(), axis.text.x=element_blank()) 
+finalVersionChimeraPlot <- finalVersionChimeraPlot +
+  geom_text(aes(y = Freq + 500, label = paste0(pct, '%')),
+            position = position_dodge(width = .9),size = 3)
+finalVersionChimeraPlot <- finalVersionChimeraPlot + facet_wrap(vars(sample))
+finalVersionChimeraPlot <- finalVersionChimeraPlot + ylab("Count")
+return(finalVersionChimeraPlot)
+}
+
+###################################################################
+# Functional Genomics Center Zurich
+# This code is distributed under the terms of the GNU General
+# Public License Version 3, June 2007.
+# The terms are available here: http://www.gnu.org/licenses/gpl.html
+# www.fgcz.ch
+
+##' @title Summary of community composition
+##' @description It calculates the percentages of the organisms in the community
+##' @param  a phyloseq object
+##' @return A data.frame
+
+communityPercSummTable <- function(phyloseqOtuObj,rank) {
+  input <- data.frame(t(phyloseqOtuObj@otu_table@.Data))
+  taxDF <- data.frame(phyloseqOtuObj@tax_table@.Data)
+  input$rank <- taxDF[[rank]]
+  colToAggregate <- grep("rank",colnames(input), value = T,invert = T)
+  aggrDF <- aggregate(x = input[colToAggregate],by = list(input$rank),sum)
+  rownames(aggrDF) <- aggrDF$Group.1
+  aggrDF <-  subset(aggrDF, select = -c(Group.1))
+  aggrDF <- aggrDF[apply(aggrDF,1,sd)>0,]
+  percTable <- apply(aggrDF,2,function(y)sapply(y,function(x) round(x/sum(y)*100,2)))
+  percTable <- data.frame(percTable)
+  percTable$meanPc <- apply(percTable,1,mean)
+  percTable <- percTable[order(percTable$meanPc, decreasing = T),]
+  percTableToShow <- head(subset(percTable,  select = -c(meanPc)),20)
+  return(percTableToShow)
 }

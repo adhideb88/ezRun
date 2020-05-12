@@ -4,6 +4,7 @@ author: "Functional Genomics Center Zurich"
 output: 
   html_document:
     self_contained: false
+    lib_dir: rmarkdownLib
     includes:
       in_header: fgcz_header.html
     css: fgcz.css
@@ -22,11 +23,6 @@ The read counts in each sample.
 
 ```{r readCounts, echo=FALSE}
 readCount <- ans4Report[["Read Counts"]]
-# par(mar=c(10.1, 4.1, 4.1, 2.1))
-# bp = barplot(readCount, ylab="Counts [Mio]", main="total reads", 
-#              names.arg = rep('',length(readCount)))
-# text(x = bp, y = par("usr")[3]-0.2, srt = 45, adj = 1, 
-#      labels = names(readCount), xpd = TRUE)
 ```
 
 ```{r readCountsPlotly, fig.height=7, fig.width=min(max(7, 7+(length(readCount)-20)*0.3), 30), echo=FALSE}
@@ -159,4 +155,3 @@ ezInteractiveTableRmd(values=ans4Report[["dataset"]])
 ```{r, echo=FALSE}
 sessionInfo()
 ```
-
