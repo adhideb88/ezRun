@@ -30,34 +30,6 @@ EzAppExceRptReport =
 ##' @param param list() environment parameters.
 ##' @author Miquel Anglada Girotto
 ezMethodExceRptReport = function(input=NA, output=NA, param=NA){
-  ## set report's working directory
-  setwdNew(basename(output$getColumn("Report")))
-  
-  ## Process output
-  processedOutputDir = "processed_output"
-  selectedSamples = param[['samples']]
-  
-  samplePaths = input$getFullPaths("excerpt")
-  idx = basename(samplePaths) %in% selectedSamples
-  samplePathsFilt = samplePaths[idx]
-  
-  plots = processSamples(samplePaths = samplePathsFilt, outputDir = processedOutputDir, getPlotsObjects=TRUE)
-
-  ## list files generated
-  dataFiles = list.files(processedOutputDir, pattern = '*.txt')
-  
-  ## Create report
-  makeRmdReport(plots=plots, dataFiles=dataFiles, rmdFile = "excerpt.Rmd")
-}
-
-
-##' @title generate smallRNA counts and QC.
-##' @description Obtain counts and QC plots across all samples.
-##' @param samplePaths <string> vector of all the files that need to be processed together.
-##' @param outputDir <string> directory name where to output generated objects and report after processing.
-##' @param getPlotsObjects <bool> TRUE to output plots as an object.
-##' @author (Rob Kitchen) Miquel Anglada Girotto
-processSamples = function(samplePaths, outputDir, getPlotsObjects=FALSE){
   require(plyr)
   require(gplots)
   require(marray)
@@ -66,188 +38,170 @@ processSamples = function(samplePaths, outputDir, getPlotsObjects=FALSE){
   require(tools)
   require(Rgraphviz)
   require(scales)
-
-  ## delete -e from .stats (they do not appear in the ExampleData, but they do when I ran the program)
-  #delete_e(samplePaths)
   
-  ## Get directories containing counts
-  samplePathList = list.dirs(samplePaths,recursive=F)
+  ## set report's working directory
+  setwdNew(basename(output$getColumn("Report")))
   
-  ## create output dir
-  dir.create(outputDir)
+  ## subset the selected sample names
+  samples <- param$samples
+  input <- input$subset(samples)
+  samplePaths <- input$getFullPaths("excerpt")
+  samplePathList <- list.dirs(samplePaths, recursive=F)
+  names(samplePathList) <- names(samplePaths)
+  
+  ## Process output
+  processedOutputDir <- "processed_output"
+  dir.create(processedOutputDir)
   
   ## reads, normalises, and saves individual sample results
-  sampleIDs = readData(samplePathList = samplePathList, output.dir = outputDir)
+  sampleIDs <- readData(samplePathList=samplePathList,
+                        output.dir=processedOutputDir)
   
   ## plot the data
-  plotsList = PlotData(sampleIDs, outputDir)
-  if(getPlotsObjects==TRUE){return(plotsList)}
+  plots <- PlotData(sampleIDs, processedOutputDir)
+
+  ## list files generated
+  dataFiles <- list.files(processedOutputDir, pattern = '*.txt')
+  
+  ## Create report
+  makeRmdReport(plots=plots, dataFiles=dataFiles, rmdFile = "excerpt.Rmd")
 }
 
 ##' @title Get smallRNA counts and stats
 ##' @description Get smallRNA counts and stats to return as final output and make QC plots.
 ##' @author (Rob Kitchen) Miquel Anglada Girotto
 readData = function(samplePathList, output.dir){
-  
-  ##
+  require(readr)
   ## Create objects to contain the data
-  ##
-  sample.data = vector(mode="list",length=length(samplePathList))
-  allIDs.calibrator = NULL
-  allIDs.miRNA = NULL
-  allIDs.tRNA = NULL
-  allIDs.piRNA = NULL
-  allIDs.gencode = NULL
-  allIDs.circularRNA = NULL
-  allIDs.exogenous_miRNA = NULL
-  allIDs.exogenous_rRNA = NULL
-  allIDs.exogenous_genomes = NULL
-  taxonomyInfo.exogenous_rRNA = NULL
-  taxonomyInfo.exogenous_genomes = NULL
+  sample.data <- list()
   
-  mapping.stats = matrix(0,nrow=length(samplePathList),ncol=30, dimnames=list(1:length(samplePathList), c("input","successfully_clipped","failed_quality_filter","failed_homopolymer_filter","calibrator","UniVec_contaminants","rRNA","reads_used_for_alignment","genome","miRNA_sense","miRNA_antisense","miRNAprecursor_sense","miRNAprecursor_antisense","tRNA_sense","tRNA_antisense","piRNA_sense","piRNA_antisense","gencode_sense","gencode_antisense","circularRNA_sense","circularRNA_antisense","not_mapped_to_genome_or_libs","repetitiveElements","endogenous_gapped","input_to_exogenous_miRNA","exogenous_miRNA","input_to_exogenous_rRNA","exogenous_rRNA","input_to_exogenous_genomes","exogenous_genomes")))
-  qc.results = matrix(0,nrow=length(samplePathList),ncol=5, dimnames=list(1:length(samplePathList), c("InputReads","GenomeReads","TranscriptomeReads","TranscriptomeGenomeRatio","TranscriptomeComplexity")))
-  maxReadLength = 10000
-  read.lengths = matrix(0,nrow=length(samplePathList),ncol=maxReadLength+1,dimnames=list(1:length(samplePathList), 0:maxReadLength))
+  allIDs.calibrator <- allIDs.miRNA <- allIDs.tRNA <- allIDs.tRNA <- allIDs.piRNA <- NULL
+  allIDs.gencode <- allIDs.circularRNA <- allIDs.exogenous_miRNA <- allIDs.exogenous_rRNA <- NULL
+  allIDs.exogenous_genomes <- taxonomyInfo.exogenous_rRNA <- taxonomyInfo.exogenous_genomes <- NULL
+
+  mapping.stats <- matrix(0, nrow=length(samplePathList), ncol=30,
+                          dimnames=list(names(samplePathList), 
+                                        c("input","successfully_clipped","failed_quality_filter",
+                                          "failed_homopolymer_filter","calibrator",
+                                          "UniVec_contaminants","rRNA","reads_used_for_alignment",
+                                          "genome","miRNA_sense","miRNA_antisense","miRNAprecursor_sense",
+                                          "miRNAprecursor_antisense","tRNA_sense","tRNA_antisense",
+                                          "piRNA_sense","piRNA_antisense","gencode_sense",
+                                          "gencode_antisense","circularRNA_sense","circularRNA_antisense",
+                                          "not_mapped_to_genome_or_libs","repetitiveElements",
+                                          "endogenous_gapped","input_to_exogenous_miRNA","exogenous_miRNA",
+                                          "input_to_exogenous_rRNA","exogenous_rRNA",
+                                          "input_to_exogenous_genomes","exogenous_genomes")))
+  mapping.statsList <- list()
+  qc.results <- matrix(0, nrow=length(samplePathList), ncol=5,
+                       dimnames=list(names(samplePathList), 
+                                     c("InputReads","GenomeReads","TranscriptomeReads",
+                                       "TranscriptomeGenomeRatio","TranscriptomeComplexity")))
+  qc.resultsList <- list()
   
-  
-  ##
+  maxReadLength <- 10000
+  read.lengths <- matrix(0, nrow=length(samplePathList),
+                         ncol=maxReadLength+1,
+                         dimnames=list(names(samplePathList),
+                                       0:maxReadLength))
+  read.lengthsList <- list()
+
   ## Loop through all samples and read the pipeline output
-  ##
   printMessage(c("Reading sample data..."))
-  removeSamples = NULL
-  for(i in 1:length(samplePathList)){
-    ## Parse the sampleID from the path:
-    tmp = unlist(strsplit(samplePathList[i], "/"))
-    thisSampleID = tmp[length(tmp)]
-    
-    ## Get timings and check this sample finished successfully
-    tmp.stats = readLines(paste(samplePathList[i],".stats",sep=""))
-    tmp.stats = delete_e(tmp.stats)
-    tmp.stats = do.call(rbind,strsplit(tmp.stats,'\t'))
-    tmp.stats = data.frame(tmp.stats,stringsAsFactors = FALSE)
-    tmp.stats[c(1,nrow(tmp.stats)),2] = ""
-    x.start = grep("#STATS",tmp.stats[,1])
-    x.end = grep("#END OF STATS",tmp.stats[,1])
-    if(length(x.start) > 0  &&  length(x.end) > 0){
-      tmp.start = strptime(unlist(strsplit(tmp.stats[x.start[1],1],"Run started at "))[2],"%Y-%m-%d--%H:%M:%S")
-      tmp.end = strptime(unlist(strsplit(tmp.stats[x.end[1],1],"Run completed at "))[2],"%Y-%m-%d--%H:%M:%S")
-      runTiming = data.frame(start=tmp.start, completed=tmp.end, duration=difftime(tmp.end,tmp.start), duration_secs=as.numeric(difftime(tmp.end,tmp.start,units="secs")))
-      continue = T
+  removeSamples <- NULL
+  for(sample in names(samplePathList)){
+    sample.data[[sample]] <- list()
+
+    ## Read sample mapping stats
+    mapping.statsList[[sample]] <- read_tsv(paste0(samplePathList[sample], ".stats"),
+                                            col_names=FALSE, comment="-e")
+    ## Read the QC result
+    qc.resultsList[[sample]] <- read_delim(paste0(samplePathList[sample], ".qcResult"),
+                                           delim=": ", col_names=FALSE)
+    ## Read the adapter sequence
+    adaterSeqFn <- list.files(samplePathList[sample], pattern="\\.adapterSeq$",
+                              full.names=TRUE)
+    sample.data[[sample]][["adaterSeq"]] <- readLines(adaterSeqFn)
+    ## Read the calibrator counts, if available
+    ## This chunk is not tested due to missing calibrator counts file
+    calibratorCountsFn <- list.files(samplePathList[sample],
+                                     pattern=".clipped.trimmed.filtered.calibratormapped.counts$",
+                                     full.names=TRUE)
+    if(length(calibratorCountsFn) == 0L){
+      sample.data[[sample]][["calibratorCounts"]] <- NA
     }else{
-      continue = F
-      removeSamples = c(removeSamples, i)
-      printMessage(c("[",i,"/",length(samplePathList),"] WARNING: Incomplete run for sample \'",thisSampleID,"\', ignoring"))
+      sample.data[[sample]][["calibratorCounts"]] <- read_tsv(calibratorCountsFn,
+                                                              col_names = FALSE)
+      colnames(sample.data) <- c("readCount", "calibratorID")
+    }
+    ## Read the clipped read lengths
+    read.lengths <- read_tsv(list.files(samplePathList[sample],
+                                        pattern="\\.readLengths.txt$",
+                                        full.names=TRUE))
+    read.lengths <- read.lengths[ ,colSums(is.na(read.lengths)) == 0L]
+    ## Read sample data
+    availableFiles = dir(samplePathList[i])
+    miRNA_sense=miRNA_antisense = tRNA_sense=tRNA_antisense = piRNA_sense=piRNA_antisense = gencode_sense=gencode_antisense = circRNA_sense=circRNA_antisense = NULL
+    
+    if(file.exists(file.path(samplePathList[sample], "readCounts_miRNAmature_sense.txt"))){
+      miRNA_sense <- read_tsv(file.path(samplePathList[sample], "readCounts_miRNAmature_sense.txt"))
+    }else{
+      miRNA_sense <- NA
+    }
+    sample.data[[sample]][["miRNA_sense"]] <- miRNA_sense
+      
+    if(file.exists(file.path(samplePathList[sample], "readCounts_miRNAmature_antisense.txt"))){
+      miRNA_antisense <- read_tsv(file.path(samplePathList[sample], "readCounts_miRNAmature_antisense.txt"))
+    }else{
+      miRNA_antisense <- NA
+    }
+    sample.data[[sample]][["miRNA_sense"]] <- miRNA_antisense
+    
+    if(file.exists(file.path(samplePathList[sample], "readCounts_tRNA_sense.txt"))){
+      tRNA_sense <- read_tsv(file.path(samplePathList[sample], "readCounts_tRNA_sense.txt"))
+      tRNA_sense <- arrange(tRNA_sense, desc(multimapAdjustedReadCount))
+    }else{
+      tRNA_sense <- NA
+    }
+    sample.data[[sample]][["tRNA_sense"]] <- tRNA_sense
+    
+    if(file.exists(file.path(samplePathList[sample], "readCounts_tRNA_antisense.txt"))){
+      tRNA_antisense <- read_tsv(file.path(samplePathList[sample], "readCounts_tRNA_antisense.txt"))
+      tRNA_antisense <- arrange(tRNA_antisense, desc(multimapAdjustedReadCount))
+    }else{
+      tRNA_antisense <- NA
+    }
+    sample.data[[sample]][["tRNA_antisense"]] <- tRNA_antisense
+    
+    if(file.exists(file.path(samplePathList[sample], "readCounts_piRNA_sense.txt"))){
+      piRNA_sense <- read_tsv(file.path(samplePathList[sample], "readCounts_piRNA_sense.txt"))
+      piRNA_sense <- arrange(piRNA_sense, desc(multimapAdjustedReadCount))
+    }else{
+      piRNA_sense <- NA
+    }
+    sample.data[[sample]][["piRNA_sense"]] <- piRNA_sense
+    
+    if(file.exists(file.path(samplePathList[sample], "readCounts_piRNA_antisense.txt"))){
+      piRNA_antisense <- read_tsv(file.path(samplePathList[sample], "readCounts_piRNA_antisense.txt"))
+      piRNA_antisense <- arrange(piRNA_antisense, desc(multimapAdjustedReadCount))
+    }else{
+      piRNA_antisense <- NA
+    }
+    sample.data[[sample]][["piRNA_antisense"]] <- piRNA_antisense
+    
+    makeGeneID = function(id){ 
+      bits=unlist(strsplit(id,":")); geneNameBits=unlist(strsplit(bits[3],"-")); 
+      geneName = geneNameBits[1]
+      if(length(geneNameBits) > 2){ geneName=paste(geneNameBits[-length(geneNameBits)],collapse="-") }
+      paste(geneName,bits[2],sep=":") 
     }
     
-    if(continue == T){
-      ##
-      ## Read sample mapping stats
-      ##
-      tmp.stats = tmp.stats[-c(1,2,nrow(tmp.stats)),]
-      tmp.stats[tmp.stats[,1] %in% "clipped", 1] = "successfully_clipped"
-      mapping.stats[i, match(tmp.stats[,1], colnames(mapping.stats))] = as.numeric(tmp.stats[,2])
-      rownames(mapping.stats)[i] = thisSampleID
+    if(file.exists(file.path(samplePathList[sample], "readCounts_gencode_sense.txt"))){
+      gencode_sense <- read_tsv(file.path(samplePathList[sample], "readCounts_gencode_sense.txt"))
+      gencode_sense <- mutate(gencode_sense, gene_name="")
+    }else{
       
-      ##
-      ## Read the QC result
-      ##
-      adapterConfidence = NA
-      qcOutcome = NA
-      if(file.exists(paste(samplePathList[i],".qcResult",sep=""))){
-        tmp.qc = read.table(paste(samplePathList[i],".qcResult",sep=""), stringsAsFactors=F, fill=T, header=F, sep=" ",skip=0)
-        if(tmp.qc[1,1] == "Adapter_confidence:"){
-          adapterConfidence = tmp.qc[1,2]
-          tmp.qc = tmp.qc[-1,]
-        }
-        qcOutcome = tmp.qc[1,2]
-        
-        qc.results[i, match(gsub(":$","",tmp.qc[-1,1]), colnames(qc.results))] = as.numeric(tmp.qc[-1,2])
-        #qc.results[i, ] = as.numeric(tmp.qc[-1,2])
-        rownames(qc.results)[i] = thisSampleID
-      }
-      
-      ##
-      ## Read the adapter sequence
-      ##
-      if(paste(thisSampleID,".adapterSeq",sep="") %in% dir(samplePathList[i])){
-        tmp.seq = try(read.table(paste(samplePathList[i],"/",thisSampleID,".adapterSeq",sep="")), silent=T)
-        if(class(tmp.seq) == "try-error"){
-          adapterSeq = NA
-        }else{
-          adapterSeq = as.character(tmp.seq[1,1])
-        }
-      }
-      
-      
-      ##
-      ## Read the calibrator counts, if available
-      ##
-      calibratorCounts = NULL
-      if(paste(thisSampleID,".clipped.trimmed.filtered.calibratormapped.counts",sep="") %in% dir(samplePathList[i])){
-        calibratorCounts = try(read.table(paste(samplePathList[i],"/",thisSampleID,".clipped.trimmed.filtered.calibratormapped.counts",sep=""), stringsAsFactors=F)[,2:1], silent=T)
-        if(class(calibratorCounts) == "try-error"){
-          calibratorCounts = NULL
-        }else{
-          colnames(calibratorCounts) = c("calibratorID","readCount")
-        }
-      }
-      
-      
-      ##
-      ## Read the clipped read lengths  
-      ##
-      if(length(grep(".readLengths.txt$", dir(samplePathList[i]))) == 1){
-        tmp = read.table(paste(samplePathList[i], dir(samplePathList[i])[grep(".readLengths.txt$", dir(samplePathList[i]))], sep="/"))
-        read.lengths[i, 1:ncol(tmp)] = as.numeric(tmp[2,])
-        rownames(read.lengths)[i] = thisSampleID
-      }
-      
-      
-      ##
-      ## Read sample data
-      ##
-      availableFiles = dir(samplePathList[i])
-      miRNA_sense=miRNA_antisense = tRNA_sense=tRNA_antisense = piRNA_sense=piRNA_antisense = gencode_sense=gencode_antisense = circRNA_sense=circRNA_antisense = NULL
-      
-      if("readCounts_miRNAmature_sense.txt" %in% availableFiles){
-        miRNA_sense = read.table(paste(samplePathList[i],"readCounts_miRNAmature_sense.txt",sep="/"), header=T, sep="\t", comment.char="", stringsAsFactors=F,colClasses=c("character","numeric","numeric","numeric","numeric"), row.names=1)
-        miRNA_sense = cbind(miRNA_sense, ID=sapply(rownames(miRNA_sense), function(id){ multiID = unlist(strsplit(id,"\\|")); multiIDs = sapply(multiID, function(idPart){unlist(strsplit(idPart,":"))[1]});   if(length(multiIDs) == 1){ multiIDs }else{ paste(sort(multiIDs),collapse="|") }  }))
-      }
-      if("readCounts_miRNAmature_antisense.txt" %in% availableFiles){
-        miRNA_antisense = read.table(paste(samplePathList[i],"readCounts_miRNAmature_antisense.txt",sep="/"), header=T, sep="\t", comment.char="", stringsAsFactors=F,colClasses=c("character","numeric","numeric","numeric","numeric"), row.names=1)
-        miRNA_antisense = cbind(miRNA_antisense, ID=sapply(rownames(miRNA_antisense), function(id){ multiID = unlist(strsplit(id,"\\|")); multiIDs = sapply(multiID, function(idPart){unlist(strsplit(idPart,":"))[1]});   if(length(multiIDs) == 1){ multiIDs }else{ paste(sort(multiIDs),collapse="|") }  }))
-      }
-      
-      if("readCounts_tRNA_sense.txt" %in% availableFiles){
-        tmp = read.table(paste(samplePathList[i],"readCounts_tRNA_sense.txt",sep="/"), header=T, sep="\t", comment.char="", stringsAsFactors=F,colClasses=c("character","numeric","numeric","numeric","numeric"), row.names=1)
-        tmp = cbind(tmp, ID=sapply(rownames(tmp), function(id){ unlist(strsplit(id,"-"))[2]  }))
-        tRNA_sense = ddply(tmp, "ID", function(mat){ c(as.numeric(mat[1,1:2]),sum(mat$multimapAdjustedReadCount),sum(mat$multimapAdjustedBarcodeCount)) })
-        colnames(tRNA_sense)[-1] = colnames(tmp)[1:4]
-        tRNA_sense = tRNA_sense[order(tRNA_sense$multimapAdjustedReadCount,decreasing=T), ]
-      }
-      if("readCounts_tRNA_antisense.txt" %in% availableFiles){
-        tmp = read.table(paste(samplePathList[i],"readCounts_tRNA_antisense.txt",sep="/"), header=T, sep="\t", comment.char="", stringsAsFactors=F,colClasses=c("character","numeric","numeric","numeric","numeric"), row.names=1)
-        tmp = cbind(tmp, ID=sapply(rownames(tmp), function(id){ unlist(strsplit(id,"-"))[2]  }))
-        tRNA_antisense = ddply(tmp, "ID", function(mat){ c(as.numeric(mat[1,1:2]),sum(mat$multimapAdjustedReadCount),sum(mat$multimapAdjustedBarcodeCount)) })
-        colnames(tRNA_antisense)[-1] = colnames(tmp)[1:4]
-        tRNA_antisense = tRNA_antisense[order(tRNA_antisense$multimapAdjustedReadCount,decreasing=T), ]
-      }
-      
-      if("readCounts_piRNA_sense.txt" %in% availableFiles){
-        piRNA_sense = read.table(paste(samplePathList[i],"readCounts_piRNA_sense.txt",sep="/"), header=T, sep="\t", comment.char="", stringsAsFactors=F,colClasses=c("character","numeric","numeric","numeric","numeric"), row.names=1)
-      }
-      if("readCounts_piRNA_antisense.txt" %in% availableFiles){
-        piRNA_antisense = read.table(paste(samplePathList[i],"readCounts_piRNA_antisense.txt",sep="/"), header=T, sep="\t", comment.char="", stringsAsFactors=F,colClasses=c("character","numeric","numeric","numeric","numeric"), row.names=1)
-      }
-      
-      
-      makeGeneID = function(id){ 
-        bits=unlist(strsplit(id,":")); geneNameBits=unlist(strsplit(bits[3],"-")); 
-        geneName = geneNameBits[1]
-        if(length(geneNameBits) > 2){ geneName=paste(geneNameBits[-length(geneNameBits)],collapse="-") }
-        paste(geneName,bits[2],sep=":") 
-      }
+    }
       if("readCounts_gencode_sense.txt" %in% availableFiles){
         tmp = read.table(paste(samplePathList[i],"readCounts_gencode_sense.txt",sep="/"), header=T, sep="\t", comment.char="", stringsAsFactors=F,colClasses=c("character","numeric","numeric","numeric","numeric"), row.names=1)
         tmp = cbind(tmp, ID=sapply(rownames(tmp), makeGeneID))
@@ -351,8 +305,7 @@ readData = function(samplePathList, output.dir){
       
       
       printMessage(c("[",i,"/",length(samplePathList),"] Added sample \'",thisSampleID,"\'"))
-    }
-  }
+}
   
   
   
